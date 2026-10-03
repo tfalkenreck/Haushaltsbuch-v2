@@ -149,6 +149,9 @@ Anforderungen:
 - Eigene IBAN pro Konto speicherbar (Basis für Umbuchungserkennung).
 - Kontoübersicht mit Saldo, abgedecktem Zeitraum und verwendetem Adapter.
 
+Bewusst nicht angelegt: Comdirect-Visa (vorhanden, aber ungenutzt). Ihr
+monatliches Entgelt erscheint als Ausgabe auf dem Comdirect-Girokonto.
+
 Außerhalb des Umfangs: Gemeinschaftskonto und geteilte Kosten.
 
 ---
