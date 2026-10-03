@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { fetchAccounts, type Account } from '../api/accounts';
 import {
+  confirmOwnIbanPairs,
   confirmTransfer,
   detectTransfers,
   dissolveTransfer,
+  fetchOwnIbanPairCount,
   fetchTransfers,
   type Transfer,
   type TransferStatus,
@@ -44,10 +46,12 @@ function Check({ transfer: t }: { transfer: Transfer }) {
       );
     }
     if (t.card) {
+      const byBankDate = t.periodBasis === 'bank_booking_date';
       const link = hrefFor('buchungen', {
         accountId: t.toAccountId ?? undefined,
         from: t.periodStart ?? undefined,
         to: t.periodEnd ?? undefined,
+        dateBasis: byBankDate ? 'bank' : undefined,
         transfers: 'exclude',
       });
       hints.push(
@@ -56,6 +60,11 @@ function Check({ transfer: t }: { transfer: Transfer }) {
             {t.card.purchaseCount} Kartenumsätze {formatDate(t.periodStart)} – {formatDate(t.periodEnd)}
           </a>
           : {formatCents(t.card.purchasesCents)}
+          <span className="muted block">
+            {byBankDate
+              ? `nach Buchungstag der Bank, Abrechnung vom ${formatDate(t.periodEnd)}`
+              : 'nach Kaufdatum (kein Abrechnungsdatum im Text)'}
+          </span>
         </span>,
       );
       hints.push(
@@ -87,10 +96,14 @@ export function TransfersPage({ params }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [ownIbanPairs, setOwnIbanPairs] = useState(0);
 
   const reload = useCallback(() => {
     fetchTransfers({ status, accountId })
       .then(setTransfers)
+      .catch((err: unknown) => setError(message(err)));
+    fetchOwnIbanPairCount()
+      .then((r) => setOwnIbanPairs(r.count))
       .catch((err: unknown) => setError(message(err)));
   }, [status, accountId]);
 
@@ -130,6 +143,18 @@ export function TransfersPage({ params }: Props) {
     void run(async () => {
       const result = await dissolveTransfer(t.id);
       return `Umbuchung aufgehoben, ${result.released} Buchung(en) zählen wieder.`;
+    });
+  }
+
+  function handleConfirmOwnIban() {
+    const ok = window.confirm(
+      `${ownIbanPairs} vorgeschlagene(s) Paar(e) bestätigen?\n` +
+        'Betroffen sind nur Paare, bei denen eine Seite die IBAN des anderen eigenen Kontos als Gegen-IBAN nennt.',
+    );
+    if (!ok) return;
+    void run(async () => {
+      const result = await confirmOwnIbanPairs();
+      return `${result.confirmed} Paar(e) bestätigt.`;
     });
   }
 
@@ -181,6 +206,9 @@ export function TransfersPage({ params }: Props) {
             }
           >
             Erkennung jetzt ausführen
+          </button>
+          <button type="button" disabled={busy || ownIbanPairs === 0} onClick={handleConfirmOwnIban}>
+            Alle Paare bestätigen, deren Gegen-IBAN ein eigenes Konto ist ({ownIbanPairs})
           </button>
         </div>
       </div>

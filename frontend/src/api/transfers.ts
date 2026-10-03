@@ -2,6 +2,8 @@ import { apiRequest, query } from './client';
 
 export type TransferKind = 'pair' | 'one_sided' | 'card_settlement';
 export type TransferStatus = 'suggested' | 'confirmed';
+/** Kartenabrechnung: Zeitraum nach Buchungstag der Bank (bis Abrechnungsdatum) oder nach Kaufdatum. */
+export type PeriodBasis = 'bank_booking_date' | 'booking_date';
 
 export interface TransferTransaction {
   id: number;
@@ -33,6 +35,7 @@ export interface Transfer {
   date: string | null;
   periodStart: string | null;
   periodEnd: string | null;
+  periodBasis: PeriodBasis | null;
   reason: string | null;
   transactions: TransferTransaction[];
   counterMissing: boolean;
@@ -48,6 +51,10 @@ export const fetchTransfers = (filter: { status?: TransferStatus; accountId?: nu
   apiRequest<Transfer[]>('GET', `/transfers${query(filter)}`);
 export const detectTransfers = () => apiRequest<DetectionResult>('POST', '/transfers/detect');
 export const confirmTransfer = (id: number) => apiRequest<Transfer>('POST', `/transfers/${id}/confirm`);
+/** Anzahl vorgeschlagener Paare, deren Gegen-IBAN ein eigenes Konto ist. */
+export const fetchOwnIbanPairCount = () => apiRequest<{ count: number }>('GET', '/transfers/own-iban-pairs');
+/** Diese Paare gesammelt bestätigen. */
+export const confirmOwnIbanPairs = () => apiRequest<{ confirmed: number }>('POST', '/transfers/own-iban-pairs/confirm');
 /** Fehlerkennung aufheben – die Buchungen zählen wieder und werden nicht erneut vorgeschlagen. */
 export const dissolveTransfer = (id: number) => apiRequest<{ released: number }>('DELETE', `/transfers/${id}`);
 

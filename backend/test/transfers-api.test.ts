@@ -71,6 +71,14 @@ describe('Umbuchungen-API', () => {
     expect(missing.statusCode).toBe(404);
   });
 
+  it('bestätigt gesammelt alle Paare mit eigener Gegen-IBAN und nennt die Anzahl vorher', async () => {
+    expect((await app.inject({ method: 'GET', url: '/api/transfers/own-iban-pairs' })).json()).toEqual({ count: 1 });
+    expect((await app.inject({ method: 'POST', url: '/api/transfers/own-iban-pairs/confirm' })).json()).toEqual({ confirmed: 1 });
+    expect((await app.inject({ method: 'GET', url: '/api/transfers/own-iban-pairs' })).json()).toEqual({ count: 0 });
+    const confirmed = (await app.inject({ method: 'GET', url: '/api/transfers?status=confirmed' })).json();
+    expect(confirmed).toMatchObject([{ kind: 'pair', amountCents: 123456 }]);
+  });
+
   it('rechnet Umbuchungen aus der Leiste der unkategorisierten Buchungen heraus', async () => {
     const summary = (await app.inject({ method: 'GET', url: '/api/transactions/uncategorized' })).json();
     // Giro: Gehalt, Miete, Erika, Sparrate (kein Sparkonto angelegt), Kreditkarte (noch keine Kartenumsätze);

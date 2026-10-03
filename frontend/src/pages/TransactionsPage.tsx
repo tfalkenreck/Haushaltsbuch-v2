@@ -38,6 +38,7 @@ function filterFromParams(params: URLSearchParams) {
     importBatchId: num('importBatchId'),
     from: params.get('from') ?? undefined,
     to: params.get('to') ?? undefined,
+    dateBasis: params.get('dateBasis') === 'bank' ? ('bank' as const) : undefined,
     q: params.get('q') ?? undefined,
     categoryId: num('categoryId'),
     uncategorized: params.get('uncategorized') === '1' ? true : undefined,
@@ -83,6 +84,7 @@ export function TransactionsPage({ params }: Props) {
       importBatchId: next.importBatchId,
       from: next.from,
       to: next.to,
+      dateBasis: next.dateBasis,
       q: next.q,
       categoryId: next.categoryId,
       uncategorized: next.uncategorized ? 1 : undefined,
@@ -184,6 +186,14 @@ export function TransactionsPage({ params }: Props) {
           bis
           <input type="date" value={filter.to ?? ''} onChange={(e) => navigate({ to: e.target.value || undefined })} />
         </label>
+        {filter.dateBasis === 'bank' && (
+          <p className="hint">
+            Von/bis gelten nach Buchungstag der Bank (Zeitraum einer Kartenabrechnung), nicht nach Kaufdatum.{' '}
+            <button type="button" className="link" onClick={() => navigate({ dateBasis: undefined })}>
+              nach Kaufdatum filtern
+            </button>
+          </p>
+        )}
         <label>
           Kategorie
           <select

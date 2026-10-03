@@ -31,6 +31,7 @@ describe('Migrationsrunner', () => {
       '002_seed_categories.sql',
       '003_import_details.sql',
       '004_bank_booking_date.sql',
+      '005_funding.sql',
     ]);
     const rows = db.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all();
     expect(rows).toEqual([
@@ -38,6 +39,7 @@ describe('Migrationsrunner', () => {
       { version: 2, name: '002_seed_categories.sql' },
       { version: 3, name: '003_import_details.sql' },
       { version: 4, name: '004_bank_booking_date.sql' },
+      { version: 5, name: '005_funding.sql' },
     ]);
   });
 

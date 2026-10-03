@@ -49,6 +49,8 @@ export interface TransactionFilter {
   importBatchId?: number | undefined;
   from?: string | undefined;
   to?: string | undefined;
+  /** bank = von/bis nach Buchungstag der Bank (Kartenabrechnung). */
+  dateBasis?: 'booking' | 'bank' | undefined;
   q?: string | undefined;
   categoryId?: number | undefined;
   uncategorized?: boolean | undefined;

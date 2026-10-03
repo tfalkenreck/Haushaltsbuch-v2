@@ -64,3 +64,24 @@ export function monthRange(from: string, to: string): string[] {
 export function formatDateDe(iso: string): string {
   return `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
 }
+
+/** `YYYY-MM` um `months` Monate verschieben. */
+export function shiftMonth(month: string, months: number): string {
+  const index = Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)) - 1 + months;
+  return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, '0')}`;
+}
+
+/**
+ * Verschiebt ein ISO-Datum um `months` Monate; der Tag wird aufs
+ * Monatsende begrenzt (31.03. − 1 Monat = 28./29.02.).
+ */
+export function addMonths(iso: string, months: number): string {
+  const month = shiftMonth(iso.slice(0, 7), months);
+  const max = daysInMonth(Number(month.slice(0, 4)), Number(month.slice(5, 7)));
+  return `${month}-${String(Math.min(Number(iso.slice(8, 10)), max)).padStart(2, '0')}`;
+}
+
+/** Tage von `a` bis `b` (positiv, wenn `b` später liegt). */
+export function daysBetween(a: string, b: string): number {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
+}

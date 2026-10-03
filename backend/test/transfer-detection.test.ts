@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   cardDebitHint,
   findCardPeriod,
+  findStatementPeriod,
   looksLikeCardCredit,
   matchPairs,
   oneSidedEvidence,
+  statementDateIn,
   type OwnAccount,
   type TransferCandidate,
 } from '../src/services/transfer-detection.js';
@@ -149,5 +151,61 @@ describe('findCardPeriod', () => {
       exact: false,
     });
     expect(findCardPeriod([], 25000, '2026-10-05', null)).toMatchObject({ start: '2026-09-04', end: '2026-10-04', sumCents: 0 });
+  });
+});
+
+describe('Abrechnungsdatum', () => {
+  it('liest „Abrechnung vom TT.MM.JJJJ“ aus dem Text', () => {
+    expect(statementDateIn('AUSGLEICH KARTENKONTO Abrechnung vom 18.09.2026')).toBe('2026-09-18');
+    expect(statementDateIn('ABRECHNUNG VOM  01.10.2026 VISA')).toBe('2026-10-01');
+    expect(statementDateIn('Abrechnung Kreditkarte 09/2026')).toBeNull();
+    expect(statementDateIn('Abrechnung vom 31.02.2026')).toBeNull();
+  });
+});
+
+describe('findStatementPeriod', () => {
+  // Kaufdatum und Buchungstag der Bank weichen ab.
+  const purchases = [
+    { bookingDate: '2026-08-04', bankBookingDate: '2026-08-05', amountCents: -8000 },
+    { bookingDate: '2026-08-17', bankBookingDate: '2026-08-19', amountCents: -3000 },
+    { bookingDate: '2026-08-25', bankBookingDate: '2026-08-26', amountCents: -12050 },
+    { bookingDate: '2026-09-10', bankBookingDate: '2026-09-11', amountCents: -4790 },
+    // Kauf vor, Buchung nach dem Abrechnungsdatum: gehört zur nächsten Abrechnung.
+    { bookingDate: '2026-09-17', bankBookingDate: '2026-09-19', amountCents: -6499 },
+  ];
+
+  it('nimmt Kartenumsätze nach Buchungstag der Bank bis einschließlich Abrechnungsdatum', () => {
+    expect(findStatementPeriod(purchases, 19840, '2026-09-18', '2026-08-19')).toEqual({
+      start: '2026-08-19',
+      end: '2026-09-18',
+      sumCents: 19840,
+      exact: true,
+    });
+    // Das Verfahren nach Kaufdatum hätte den Kauf vom 17.09. mitgezählt.
+    expect(findCardPeriod(purchases, 19840, '2026-09-22', '2026-08-19').exact).toBe(false);
+  });
+
+  it('sucht ohne vorige Abrechnung den Beginn, ab dem die Summe passt', () => {
+    expect(findStatementPeriod(purchases, 8000, '2026-08-18', null)).toEqual({
+      start: '2026-08-05',
+      end: '2026-08-18',
+      sumCents: 8000,
+      exact: true,
+    });
+  });
+
+  it('meldet eine Abweichung und beginnt ersatzweise nach demselben Tag im Vormonat', () => {
+    expect(findStatementPeriod(purchases, 99999, '2026-09-18', null)).toEqual({
+      start: '2026-08-19',
+      end: '2026-09-18',
+      sumCents: 19840,
+      exact: false,
+    });
+  });
+
+  it('zählt Altbestand ohne Buchungstag mit dem Kaufdatum', () => {
+    expect(findStatementPeriod([{ bookingDate: '2026-09-01', amountCents: -1000 }], 1000, '2026-09-18', '2026-08-19')).toMatchObject({
+      exact: true,
+    });
   });
 });

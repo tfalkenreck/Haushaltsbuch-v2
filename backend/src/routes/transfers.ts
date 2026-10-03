@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/connection.js';
 import {
+  confirmOwnIbanPairs,
   confirmTransfer,
+  countOwnIbanPairs,
   detectTransfers,
   dissolveTransfer,
   getTransfer,
@@ -33,6 +35,12 @@ export function transferRoutes(app: FastifyInstance, db: Db): void {
     },
     async (request) => listTransfers(db, request.query),
   );
+
+  /** Wie viele vorgeschlagene Paare eine eigene IBAN als Gegen-IBAN nennen (Anzahl vor der Sammelbestätigung). */
+  app.get('/api/transfers/own-iban-pairs', async () => countOwnIbanPairs(db));
+
+  /** Sammelbestätigung dieser Paare. */
+  app.post('/api/transfers/own-iban-pairs/confirm', async () => confirmOwnIbanPairs(db));
 
   app.get<{ Params: { id: number } }>('/api/transfers/:id', { schema: { params: idParams } }, async (request) =>
     getTransfer(db, request.params.id),

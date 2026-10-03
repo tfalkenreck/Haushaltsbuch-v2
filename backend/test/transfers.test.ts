@@ -6,7 +6,9 @@ import { importFile, undoImport } from '../src/services/imports.js';
 import { createRule } from '../src/services/rules.js';
 import { listTransactions, setTransactionCategory, uncategorizedSummary } from '../src/services/transactions.js';
 import {
+  confirmOwnIbanPairs,
   confirmTransfer,
+  countOwnIbanPairs,
   detectTransfers,
   dissolveTransfer,
   listTransfers,
@@ -161,6 +163,56 @@ describe('Erkennung beim Import', () => {
   });
 });
 
+describe('Kartenabrechnung mit Abrechnungsdatum', () => {
+  it('nimmt Kartenumsätze nach Buchungstag der Bank bis zum Abrechnungsdatum – Kauf vor, Buchung nach dem Datum zählt zur nächsten', () => {
+    run(giro, 'kartenabrechnung/giro.csv');
+    run(visa, 'kartenabrechnung/visa.csv');
+    const settlements = listTransfers(db)
+      .filter((t) => t.kind === 'card_settlement')
+      .sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
+    expect(settlements).toHaveLength(2);
+    expect(settlements[0]).toMatchObject({
+      amountCents: 8000,
+      periodBasis: 'bank_booking_date',
+      periodStart: '2026-08-05',
+      periodEnd: '2026-08-18',
+      counterMissing: false,
+      card: { purchaseCount: 1, purchasesCents: 8000, differenceCents: 0 },
+    });
+    // Tankstelle: gekauft 17.08., gebucht 19.08. → September-Abrechnung.
+    // Elektromarkt: gekauft 17.09., gebucht 19.09. → nicht in der Abrechnung vom 18.09.
+    expect(settlements[1]).toMatchObject({
+      amountCents: 19840,
+      periodBasis: 'bank_booking_date',
+      periodStart: '2026-08-19',
+      periodEnd: '2026-09-18',
+      counterMissing: false,
+      card: { purchaseCount: 3, purchasesCents: 19840, differenceCents: 0 },
+    });
+    // Kartenumsätze zählen weiter mit ihrem Kaufdatum.
+    expect(db.prepare('SELECT booking_date FROM transactions WHERE account_id = ? AND amount_cents = -6499').get(visa)).toEqual({
+      booking_date: '2026-09-17',
+    });
+  });
+
+  it('berechnet Abrechnungen aus der Zeit vor dem Abrechnungsdatum einmalig neu, auch bestätigte', () => {
+    run(giro, 'kartenabrechnung/giro.csv');
+    run(visa, 'kartenabrechnung/visa.csv');
+    const september = listTransfers(db).find((t) => t.amountCents === 19840) as Transfer;
+    confirmTransfer(db, september.id);
+    db.prepare("UPDATE transfers SET period_basis = NULL, period_start = '2026-08-19', period_end = '2026-09-21'").run();
+    expect(listTransfers(db).find((t) => t.id === september.id)?.card?.differenceCents).not.toBe(0);
+
+    detectTransfers(db);
+    expect(listTransfers(db).find((t) => t.id === september.id)).toMatchObject({
+      status: 'confirmed',
+      periodBasis: 'bank_booking_date',
+      periodEnd: '2026-09-18',
+      card: { differenceCents: 0 },
+    });
+  });
+});
+
 describe('Wirkung', () => {
   beforeEach(importAll);
 
@@ -246,6 +298,25 @@ describe('Von Hand', () => {
       periodEnd: '2026-09-28',
       card: { differenceCents: 0 },
     });
+  });
+});
+
+describe('Sammelbestätigung', () => {
+  it('bestätigt nur vorgeschlagene Paare, deren Gegen-IBAN das andere eigene Konto ist', () => {
+    importAll();
+    // Dauerauftrag (IBAN Ausgabenkonto) und Sparrate September (IBAN Sparkonto).
+    expect(countOwnIbanPairs(db)).toEqual({ count: 2 });
+    // Ohne Gegen-IBAN: kein Kandidat für die Sammelbestätigung.
+    const sparrate = transferOf(tx(giro, -10000, '2026-09-11')) as Transfer;
+    db.prepare('UPDATE transactions SET counterparty_iban = NULL WHERE transfer_id = ?').run(sparrate.id);
+    expect(countOwnIbanPairs(db)).toEqual({ count: 1 });
+
+    expect(confirmOwnIbanPairs(db)).toEqual({ confirmed: 1 });
+    expect(transferOf(tx(giro, -123456))?.status).toBe('confirmed');
+    expect(transferOf(tx(spar, 10000, '2026-09-11'))?.status).toBe('suggested');
+    // Einseitige und Kartenabrechnungen bleiben vorgeschlagen.
+    expect(transferOf(tx(spar, 10000, '2026-08-11'))?.status).toBe('suggested');
+    expect(countOwnIbanPairs(db)).toEqual({ count: 0 });
   });
 });
 

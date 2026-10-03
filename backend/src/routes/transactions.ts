@@ -25,6 +25,7 @@ const listQuery = {
     importBatchId: { type: 'integer', minimum: 1 },
     from: date,
     to: date,
+    dateBasis: { type: 'string', enum: ['booking', 'bank'] },
     q: { type: 'string', maxLength: 200 },
     categoryId: { type: 'integer', minimum: 1 },
     uncategorized: { type: 'boolean' },

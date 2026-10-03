@@ -1,4 +1,4 @@
-import { addDays } from '../lib/date.js';
+import { addDays, addMonths, parseGermanDate } from '../lib/date.js';
 import { normalizeIban } from '../lib/iban.js';
 
 /**
@@ -191,8 +191,20 @@ export function cardDebitHint(t: TransferCandidate, card: OwnAccount, accounts: 
 }
 
 export interface CardPurchase {
+  /** Kaufdatum. */
   bookingDate: string;
+  /** Buchungstag der Bank; fehlt beim Altbestand (dann gilt das Kaufdatum). */
+  bankBookingDate?: string | null;
   amountCents: number;
+}
+
+/**
+ * Abrechnungsdatum aus dem Text des Ausgleichs bzw. der Abbuchung:
+ * „Abrechnung vom 18.09.2026“ → `2026-09-18`. `null`, wenn keins genannt ist.
+ */
+export function statementDateIn(text: string): string | null {
+  const match = /abrechnung\s+vom\s+(\d{2}\.\d{2}\.\d{4})/i.exec(text);
+  return match?.[1] ? parseGermanDate(match[1]) : null;
 }
 
 export interface CardPeriod {
@@ -259,4 +271,42 @@ export function findCardPeriod(
     sumCents: days.length === 0 ? 0 : sum(0, days.length - 1),
     exact: false,
   };
+}
+
+/**
+ * Abrechnungszeitraum bei bekanntem Abrechnungsdatum (Erkenntnis aus dem
+ * ersten Echtdaten-Test, CLAUDE.md § 19): Die Bank rechnet nach ihrem
+ * Buchungstag ab, nicht nach dem Kaufdatum. Der Zeitraum umfasst die
+ * Kartenumsätze mit Buchungstag nach der vorigen Abrechnung bis
+ * einschließlich des Abrechnungsdatums – ein Kauf am 17.09., gebucht am
+ * 19.09., gehört zur Abrechnung nach dem 18.09.
+ *
+ * Beginn ist `fixedStart` (Tag nach der vorigen Abrechnung derselben Karte),
+ * solange er im Suchfenster liegt. Sonst der früheste Buchungstag, ab dem
+ * die Summe genau passt, ersatzweise der Tag nach demselben Datum im
+ * Vormonat. Altbestand ohne Buchungstag zählt mit dem Kaufdatum.
+ */
+export function findStatementPeriod(
+  purchases: CardPurchase[],
+  amountCents: number,
+  statementDate: string,
+  fixedStart: string | null,
+): CardPeriod {
+  const bankDate = (p: CardPurchase) => p.bankBookingDate ?? p.bookingDate;
+  const earliest = addDays(statementDate, -CARD_LOOKBACK_DAYS);
+  const inWindow = purchases.filter((p) => bankDate(p) >= earliest && bankDate(p) <= statementDate);
+  const sumFrom = (start: string) =>
+    inWindow.filter((p) => bankDate(p) >= start).reduce((sum, p) => sum - p.amountCents, 0);
+  const period = (start: string): CardPeriod => {
+    const sumCents = sumFrom(start);
+    return { start, end: statementDate, sumCents, exact: sumCents === amountCents };
+  };
+
+  if (fixedStart !== null && fixedStart >= earliest && fixedStart <= statementDate) return period(fixedStart);
+
+  const days = [...new Set(inWindow.map(bankDate))].sort();
+  for (const day of days) {
+    if (sumFrom(day) === amountCents) return period(day);
+  }
+  return period(addDays(addMonths(statementDate, -1), 1));
 }

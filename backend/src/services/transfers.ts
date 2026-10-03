@@ -6,11 +6,14 @@ import {
   cardDebitHint,
   daysApart,
   findCardPeriod,
+  findStatementPeriod,
   looksLikeCardCredit,
   matchPairs,
   oneSidedEvidence,
   ownAccountNamedBy,
+  statementDateIn,
   TRANSFER_WINDOW_DAYS,
+  type CardPeriod,
   type CardPurchase,
   type OwnAccount,
   type TransferCandidate,
@@ -27,12 +30,16 @@ import {
  * - Kategorien werden nie verändert.
  * - Kartenabrechnung 1:n: nur Sammelabbuchung und Gutschrift auf dem
  *   Kartenkonto tragen `transfer_id`; die Kartenumsätze bleiben Ausgaben
- *   und gehören über `to_account_id` + Zeitraum (Kaufdatum) dazu.
+ *   und gehören über `to_account_id` + Zeitraum dazu. Der Zeitraum gilt
+ *   nach Buchungstag der Bank bis zum Abrechnungsdatum, wenn der Text es
+ *   nennt („Abrechnung vom …“), sonst nach Kaufdatum (`period_basis`).
  */
 
 export type TransferKind = 'pair' | 'one_sided' | 'card_settlement';
 export type TransferOrigin = 'auto' | 'manual';
 export type TransferStatus = 'suggested' | 'confirmed';
+/** Datum, nach dem der Abrechnungszeitraum einer Kartenabrechnung bemessen ist. */
+export type PeriodBasis = 'bank_booking_date' | 'booking_date';
 
 interface TransferRow {
   id: number;
@@ -44,6 +51,7 @@ interface TransferRow {
   amount_cents: number;
   period_start: string | null;
   period_end: string | null;
+  period_basis: PeriodBasis | null;
   detection_reason: string | null;
   notes: string | null;
   created_at: string;
@@ -72,7 +80,7 @@ export interface TransferTransaction {
 }
 
 export interface CardCheck {
-  /** Kartenumsätze im Abrechnungszeitraum (nach Kaufdatum). */
+  /** Kartenumsätze im Abrechnungszeitraum (nach `periodBasis`). */
   purchaseCount: number;
   /** Ihre Summe als positiver Abrechnungsbetrag (Erstattungen mindern ihn). */
   purchasesCents: number;
@@ -94,6 +102,11 @@ export interface Transfer {
   date: string | null;
   periodStart: string | null;
   periodEnd: string | null;
+  /**
+   * Kartenabrechnung: bank_booking_date = Zeitraum nach Buchungstag der Bank
+   * bis zum Abrechnungsdatum (= periodEnd), booking_date = nach Kaufdatum.
+   */
+  periodBasis: PeriodBasis | null;
   reason: string | null;
   transactions: TransferTransaction[];
   /** Eine Seite ist nicht importiert (einseitig oder Abrechnung mit nur einer Seite). */
@@ -164,16 +177,21 @@ function linkedTransactions(db: Db, transferId: number): LinkedTx[] {
     .all(transferId) as LinkedTx[];
 }
 
-/** Kartenumsätze eines Kartenkontos: alles dort, was keine Umbuchung ist. */
-function cardPurchases(db: Db, cardAccountId: number): CardPurchase[] {
+/**
+ * Kartenumsätze eines Kartenkontos: alles dort, was keine Umbuchung ist –
+ * außer `excludeIds` (noch nicht verknüpfte Ausgleichsbuchungen).
+ */
+function cardPurchases(db: Db, cardAccountId: number, excludeIds: ReadonlySet<number>): CardPurchase[] {
   return (
     db
       .prepare(
-        `SELECT booking_date, amount_cents FROM transactions
+        `SELECT id, booking_date, bank_booking_date, amount_cents FROM transactions
           WHERE account_id = ? AND transfer_id IS NULL ORDER BY booking_date`,
       )
-      .all(cardAccountId) as { booking_date: string; amount_cents: number }[]
-  ).map((r) => ({ bookingDate: r.booking_date, amountCents: r.amount_cents }));
+      .all(cardAccountId) as { id: number; booking_date: string; bank_booking_date: string | null; amount_cents: number }[]
+  )
+    .filter((r) => !excludeIds.has(r.id))
+    .map((r) => ({ bookingDate: r.booking_date, bankBookingDate: r.bank_booking_date, amountCents: r.amount_cents }));
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +206,7 @@ interface NewTransfer {
   amountCents: number;
   periodStart?: string | null;
   periodEnd?: string | null;
+  periodBasis?: PeriodBasis | null;
   reason: string;
 }
 
@@ -197,8 +216,8 @@ function insertTransfer(db: Db, t: NewTransfer, transactionIds: number[]): numbe
     db
       .prepare(
         `INSERT INTO transfers (kind, origin, status, from_account_id, to_account_id, amount_cents,
-                                period_start, period_end, detection_reason, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                period_start, period_end, period_basis, detection_reason, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         t.kind,
@@ -209,6 +228,7 @@ function insertTransfer(db: Db, t: NewTransfer, transactionIds: number[]): numbe
         t.amountCents,
         t.periodStart ?? null,
         t.periodEnd ?? null,
+        t.periodBasis ?? null,
         t.reason,
         now,
         now,
@@ -247,19 +267,46 @@ function previousPeriodEnd(db: Db, cardAccountId: number, date: string, excludeI
   return last ? addDays(last.period_end as string, 1) : null;
 }
 
-function computeCardPeriod(db: Db, cardAccountId: number, amountCents: number, date: string, excludeId: number | null) {
-  return findCardPeriod(cardPurchases(db, cardAccountId), amountCents, date, previousPeriodEnd(db, cardAccountId, date, excludeId));
+interface ComputedCardPeriod extends CardPeriod {
+  basis: PeriodBasis;
 }
+
+/**
+ * Abrechnungszeitraum einer Kartenabrechnung. Nennt einer der Texte
+ * (Ausgleich auf der Karte, Abbuchung vom Girokonto) „Abrechnung vom
+ * TT.MM.JJJJ“, gilt der Buchungstag der Bank bis zu diesem Datum; sonst
+ * das Verfahren nach Kaufdatum vor dem Tag der Abbuchung.
+ */
+function computeCardPeriod(
+  db: Db,
+  cardAccountId: number,
+  amountCents: number,
+  date: string,
+  excludeId: number | null,
+  texts: string[],
+  excludeTxIds: ReadonlySet<number> = new Set(),
+): ComputedCardPeriod {
+  const purchases = cardPurchases(db, cardAccountId, excludeTxIds);
+  const start = previousPeriodEnd(db, cardAccountId, date, excludeId);
+  const statementDate = texts.map(statementDateIn).find((d) => d !== null) ?? null;
+  return statementDate !== null
+    ? { ...findStatementPeriod(purchases, amountCents, statementDate, start), basis: 'bank_booking_date' }
+    : { ...findCardPeriod(purchases, amountCents, date, start), basis: 'booking_date' };
+}
+
+const textOf = (t: { counterparty: string; purpose: string }) => `${t.counterparty} ${t.purpose}`;
 
 /**
  * Zeiträume der vorgeschlagenen Kartenabrechnungen neu bestimmen, in
  * zeitlicher Reihenfolge – neue Kartenumsätze können eine Abweichung
- * auflösen. Bestätigte und von Hand angelegte bleiben, wie sie sind.
+ * auflösen. Bestätigte und von Hand angelegte bleiben, wie sie sind –
+ * außer sie stammen aus der Zeit vor Migration 005 (`period_basis` NULL):
+ * die werden einmalig nach dem Verfahren mit Abrechnungsdatum berechnet.
  */
 function recomputeCardPeriods(db: Db, cardAccountId: number): void {
   const rows = db
     .prepare(
-      `SELECT tr.id, tr.amount_cents, tr.origin, tr.status, tr.period_start, tr.period_end,
+      `SELECT tr.id, tr.amount_cents, tr.origin, tr.status, tr.period_start, tr.period_end, tr.period_basis,
               (SELECT min(booking_date) FROM transactions t WHERE t.transfer_id = tr.id) AS d
          FROM transfers tr WHERE tr.kind = 'card_settlement' AND tr.to_account_id = ?`,
     )
@@ -270,14 +317,21 @@ function recomputeCardPeriods(db: Db, cardAccountId: number): void {
     status: TransferStatus;
     period_start: string | null;
     period_end: string | null;
+    period_basis: PeriodBasis | null;
     d: string | null;
   }[];
   rows.sort((a, b) => (a.d ?? '').localeCompare(b.d ?? '') || a.id - b.id);
-  const update = db.prepare('UPDATE transfers SET period_start = ?, period_end = ?, updated_at = ? WHERE id = ?');
+  const update = db.prepare(
+    'UPDATE transfers SET period_start = ?, period_end = ?, period_basis = ?, updated_at = ? WHERE id = ?',
+  );
   for (const row of rows) {
-    if (row.d === null || row.origin === 'manual' || row.status === 'confirmed') continue;
-    const period = computeCardPeriod(db, cardAccountId, row.amount_cents, row.d, row.id);
-    if (period.start !== row.period_start || period.end !== row.period_end) update.run(period.start, period.end, nowIso(), row.id);
+    if (row.d === null) continue;
+    if (row.period_basis !== null && (row.origin === 'manual' || row.status === 'confirmed')) continue;
+    const texts = linkedTransactions(db, row.id).map(textOf);
+    const period = computeCardPeriod(db, cardAccountId, row.amount_cents, row.d, row.id, texts);
+    if (period.start !== row.period_start || period.end !== row.period_end || period.basis !== row.period_basis) {
+      update.run(period.start, period.end, period.basis, nowIso(), row.id);
+    }
   }
 }
 
@@ -347,6 +401,8 @@ function detectCardSettlements(db: Db, accounts: OwnAccount[], candidates: Trans
     }
 
     // b) Gutschrift auf dem Kartenkonto (Ausgleich) + Sammelabbuchung vom Girokonto.
+    //    Noch nicht verknüpfte Ausgleichsbuchungen zählen nie als Kartenumsatz.
+    const cardCredits = new Set(candidates.filter((c) => looksLikeCardCredit(c, card, accounts)).map((c) => c.id));
     for (const credit of candidates) {
       if (used.has(credit.id) || !looksLikeCardCredit(credit, card, accounts)) continue;
       const debit = nearestCounter(candidates, used, credit, (c) => {
@@ -358,7 +414,8 @@ function detectCardSettlements(db: Db, accounts: OwnAccount[], candidates: Trans
       used.add(credit.id);
       if (debit) used.add(debit.id);
       const date = debit && debit.bookingDate < credit.bookingDate ? debit.bookingDate : credit.bookingDate;
-      const period = computeCardPeriod(db, card.id, credit.amountCents, date, null);
+      const texts = (debit ? [credit, debit] : [credit]).map(textOf);
+      const period = computeCardPeriod(db, card.id, credit.amountCents, date, null, texts, cardCredits);
       insertTransfer(
         db,
         {
@@ -369,6 +426,7 @@ function detectCardSettlements(db: Db, accounts: OwnAccount[], candidates: Trans
           amountCents: credit.amountCents,
           periodStart: period.start,
           periodEnd: period.end,
+          periodBasis: period.basis,
           reason: debit
             ? 'Ausgleich auf dem Kartenkonto und Abbuchung mit gleichem Betrag'
             : 'Ausgleich auf dem Kartenkonto; Abbuchung vom Girokonto nicht importiert',
@@ -384,7 +442,7 @@ function detectCardSettlements(db: Db, accounts: OwnAccount[], candidates: Trans
       if (used.has(debit.id) || isCardAccount(debit.accountId)) continue;
       const hint = cardDebitHint(debit, card, accounts);
       if (hint === null) continue;
-      const period = computeCardPeriod(db, card.id, -debit.amountCents, debit.bookingDate, null);
+      const period = computeCardPeriod(db, card.id, -debit.amountCents, debit.bookingDate, null, [textOf(debit)], cardCredits);
       if (hint === 'word' && !period.exact) continue;
       used.add(debit.id);
       insertTransfer(
@@ -397,6 +455,7 @@ function detectCardSettlements(db: Db, accounts: OwnAccount[], candidates: Trans
           amountCents: -debit.amountCents,
           periodStart: period.start,
           periodEnd: period.end,
+          periodBasis: period.basis,
           reason:
             hint === 'iban'
               ? `Abbuchung nennt das Kartenkonto „${card.name}“`
@@ -510,7 +569,7 @@ export function detectTransfers(db: Db): DetectionResult {
       const other = match.otherAccountId !== null ? byId.get(match.otherAccountId) : undefined;
       if (other?.role === 'kreditkarte' && t.amountCents < 0) {
         // Gehört zur Karte, aber ohne Gutschrift: als Kartenabrechnung führen.
-        const period = computeCardPeriod(db, other.id, -t.amountCents, t.bookingDate, null);
+        const period = computeCardPeriod(db, other.id, -t.amountCents, t.bookingDate, null, [textOf(t)]);
         insertTransfer(
           db,
           {
@@ -521,6 +580,7 @@ export function detectTransfers(db: Db): DetectionResult {
             amountCents: -t.amountCents,
             periodStart: period.start,
             periodEnd: period.end,
+            periodBasis: period.basis,
             reason: match.reason,
           },
           [t.id],
@@ -578,10 +638,11 @@ export function repairTransfersAfterDelete(db: Db): void {
 
 function cardCheck(db: Db, row: TransferRow): CardCheck | null {
   if (row.kind !== 'card_settlement' || row.to_account_id === null || !row.period_start || !row.period_end) return null;
+  const dateColumn = row.period_basis === 'bank_booking_date' ? 'coalesce(bank_booking_date, booking_date)' : 'booking_date';
   const sums = db
     .prepare(
       `SELECT count(*) AS n, coalesce(-sum(amount_cents), 0) AS cents FROM transactions
-        WHERE account_id = ? AND transfer_id IS NULL AND booking_date BETWEEN ? AND ?`,
+        WHERE account_id = ? AND transfer_id IS NULL AND ${dateColumn} BETWEEN ? AND ?`,
     )
     .get(row.to_account_id, row.period_start, row.period_end) as { n: number; cents: number };
   return { purchaseCount: sums.n, purchasesCents: sums.cents, differenceCents: row.amount_cents - sums.cents };
@@ -607,6 +668,7 @@ function toTransfer(db: Db, row: TransferRow, names: Map<number, string>): Trans
     date: txs[0]?.booking_date ?? null,
     periodStart: row.period_start,
     periodEnd: row.period_end,
+    periodBasis: row.kind === 'card_settlement' ? (row.period_basis ?? 'booking_date') : null,
     reason: row.detection_reason,
     transactions: txs.map((t) => ({
       id: t.id,
@@ -664,6 +726,43 @@ export function confirmTransfer(db: Db, id: number): Transfer {
   getTransfer(db, id);
   db.prepare("UPDATE transfers SET status = 'confirmed', updated_at = ? WHERE id = ?").run(nowIso(), id);
   return getTransfer(db, id);
+}
+
+/**
+ * Vorgeschlagene Paare, bei denen eine Seite als Gegen-IBAN die IBAN des
+ * anderen beteiligten eigenen Kontos nennt – die sichersten Treffer, die
+ * sich gesammelt bestätigen lassen.
+ */
+function ownIbanPairIds(db: Db): number[] {
+  return (
+    db
+      .prepare(
+        `SELECT tr.id FROM transfers tr
+          WHERE tr.kind = 'pair' AND tr.status = 'suggested'
+            AND EXISTS (
+              SELECT 1 FROM transactions t
+                JOIN accounts other ON other.iban = t.counterparty_iban AND other.id <> t.account_id
+               WHERE t.transfer_id = tr.id AND other.id IN (tr.from_account_id, tr.to_account_id))
+          ORDER BY tr.id`,
+      )
+      .all() as { id: number }[]
+  ).map((r) => r.id);
+}
+
+/** Anzahl der Paare, die „Alle Paare mit eigener Gegen-IBAN bestätigen“ beträfe. */
+export function countOwnIbanPairs(db: Db): { count: number } {
+  return { count: ownIbanPairIds(db).length };
+}
+
+/** Sammelbestätigung: alle vorgeschlagenen Paare, deren Gegen-IBAN ein eigenes Konto ist. */
+export function confirmOwnIbanPairs(db: Db): { confirmed: number } {
+  return db.transaction(() => {
+    const ids = ownIbanPairIds(db);
+    const confirm = db.prepare("UPDATE transfers SET status = 'confirmed', updated_at = ? WHERE id = ?");
+    const now = nowIso();
+    for (const id of ids) confirm.run(now, id);
+    return { confirmed: ids.length };
+  })();
 }
 
 /**
@@ -739,7 +838,8 @@ export function markTransfer(db: Db, txId: number, input: MarkInput): Transfer {
         counterAccountId === null ? null : nearestCounter(candidates, new Set(), self, (c) => c.accountId === counterAccountId);
       const giroAccountId = card === own ? (counter?.accountId ?? other?.id ?? null) : own.id;
       const date = counter && counter.bookingDate < tx.booking_date ? counter.bookingDate : tx.booking_date;
-      const period = computeCardPeriod(db, card.id, amount, date, null);
+      const linked = counter ? [tx, counter] : [tx];
+      const period = computeCardPeriod(db, card.id, amount, date, null, linked.map(textOf), new Set(linked.map((t) => t.id)));
       const id = insertTransfer(
         db,
         {
@@ -750,6 +850,7 @@ export function markTransfer(db: Db, txId: number, input: MarkInput): Transfer {
           amountCents: amount,
           periodStart: period.start,
           periodEnd: period.end,
+          periodBasis: period.basis,
           reason: 'von Hand',
         },
         counter ? [tx.id, counter.id] : [tx.id],
