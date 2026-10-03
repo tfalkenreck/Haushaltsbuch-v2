@@ -58,6 +58,13 @@ fließt, und daraus **konkrete Hinweise** ableitet – nicht nur Zahlen anzeigt.
   Node-Hauptversion ändert, prüft vorher, dass es Prebuilds gibt.
 - Alle Abhängigkeiten exakt gepinnt (`save-exact=true` in `.npmrc`),
   `package-lock.json` wird committet.
+- npm 11 führt Installskripte nur für Pakete aus, die unter `allowScripts`
+  in der Root-`package.json` freigegeben sind (versionsgenau). Freigegeben:
+  `esbuild`, `better-sqlite3`. Nach jedem Update dieser Pakete die neuen
+  Versionen per `npm install-scripts approve <pkg>` freigeben und
+  committen. Keine weiteren Pakete ohne Begründung freigeben.
+- Sicherheitsupdates per gezieltem Pin auf die gefixte Version, nie
+  `npm audit fix --force`.
 - Skripte in `package.json` müssen unter `cmd.exe` laufen: keine
   Bash-Syntax, keine `rm -rf`, keine Umgebungsvariablen per `FOO=bar cmd`.
 

@@ -85,19 +85,29 @@ Ein Doppelklick-Startskript folgt in Phase 8.
 **„Die Ausführung von Skripts ist auf diesem System deaktiviert“**
 → `npm.cmd` statt `npm` verwenden (siehe oben).
 
-**esbuild: Installskript blockiert / „The package @esbuild/win32-x64 could
-not be found“**
-Vite und `tsx` nutzen esbuild. Dessen Installskript muss laufen dürfen, um
-die passende Windows-Binary einzurichten. Prüfen und reparieren:
+**„install-scripts … not yet covered by allowScripts“ (npm 11)**
+npm 11 führt Installskripte nur für freigegebene Pakete aus. Hier brauchen
+`esbuild` (Vite, `tsx`) und `better-sqlite3` ihr Skript, um die
+Windows-Binaries einzurichten. Die Freigaben stehen versionsgenau unter
+`allowScripts` in der `package.json` und sind committet – ein frischer Klon
+braucht nichts zu tun.
 
-```powershell
-npm.cmd config get ignore-scripts   # muss "false" sein
-npm.cmd config set ignore-scripts false
-npm.cmd rebuild esbuild
+Erscheint die Warnung nach einem Versionsupdate erneut, die neuen Versionen
+freigeben, nachbauen und die geänderte `package.json` committen:
+
+```
+npm install-scripts approve esbuild
+npm install-scripts approve better-sqlite3
+npm rebuild esbuild better-sqlite3
 ```
 
-Hält ein Virenscanner `esbuild.exe` fest, den Projektordner dort als
-Ausnahme eintragen und `npm.cmd rebuild esbuild` wiederholen.
+Nur Pakete freigeben, deren Skript bekannt und nötig ist
+(`npm install-scripts ls` zeigt sie).
+
+**„The package @esbuild/win32-x64 could not be found“**
+Das esbuild-Skript ist nicht gelaufen: wie oben freigeben und
+`npm rebuild esbuild`. Hält ein Virenscanner `esbuild.exe` fest, den
+Projektordner dort als Ausnahme eintragen und den Rebuild wiederholen.
 
 **`better-sqlite3`: Fehler mit `node-gyp`, „gyp ERR!“ oder „Python not
 found“**
