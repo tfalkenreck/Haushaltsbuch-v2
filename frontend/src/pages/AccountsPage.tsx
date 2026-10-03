@@ -11,7 +11,9 @@ import {
   type BankAdapter,
 } from '../api/accounts';
 import { AccountForm } from '../components/AccountForm';
+import { formatCents, formatDate } from '../lib/format';
 import { formatIban } from '../lib/iban';
+import { hrefFor } from '../lib/route';
 import { ROLE_LABELS } from '../lib/labels';
 
 export function AccountsPage() {
@@ -81,6 +83,8 @@ export function AccountsPage() {
               <th>Rolle</th>
               <th>Bank-Adapter</th>
               <th>IBAN</th>
+              <th className="num">Saldo</th>
+              <th>Zeitraum</th>
               <th>Status</th>
               <th />
             </tr>
@@ -89,7 +93,7 @@ export function AccountsPage() {
             {accounts.map((account) =>
               editingId === account.id ? (
                 <tr key={account.id}>
-                  <td colSpan={6}>
+                  <td colSpan={8}>
                     <AccountForm
                       roles={roles}
                       adapters={adapters}
@@ -111,6 +115,27 @@ export function AccountsPage() {
                   <td>{ROLE_LABELS[account.role]}</td>
                   <td>{adapterLabel(account.bankAdapter)}</td>
                   <td className="iban">{account.iban ? formatIban(account.iban) : '–'}</td>
+                  <td className="num">
+                    {account.balanceCents === null ? (
+                      '–'
+                    ) : (
+                      <span title={`laut Import, Stand ${formatDate(account.balanceDate)}`}>
+                        {formatCents(account.balanceCents)}
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    {account.coverageStart === null ? (
+                      <a href={hrefFor('import', { accountId: account.id })}>noch nichts importiert</a>
+                    ) : (
+                      <a href={hrefFor('buchungen', { accountId: account.id })}>
+                        <span className="nowrap">
+                          {formatDate(account.coverageStart)} – {formatDate(account.coverageEnd)}
+                        </span>
+                        <small className="block">{account.transactionCount} Buchungen</small>
+                      </a>
+                    )}
+                  </td>
                   <td>{account.active ? 'aktiv' : 'deaktiviert'}</td>
                   <td className="row-actions">
                     <button type="button" onClick={() => setEditingId(account.id)}>

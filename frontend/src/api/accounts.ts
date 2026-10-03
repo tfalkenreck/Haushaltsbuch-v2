@@ -11,6 +11,11 @@ export interface Account {
   active: boolean;
   createdAt: string;
   updatedAt: string;
+  balanceCents: number | null;
+  balanceDate: string | null;
+  coverageStart: string | null;
+  coverageEnd: string | null;
+  transactionCount: number;
 }
 
 export interface BankAdapter {

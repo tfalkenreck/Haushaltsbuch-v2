@@ -21,3 +21,8 @@ export function isValidIban(iban: string): boolean {
   }
   return remainder === 1;
 }
+
+/** IBAN in Vierergruppen für Meldungen: DE89 3704 0044 0532 0130 00. */
+export function formatIban(iban: string): string {
+  return iban.replace(/(.{4})(?=.)/g, '$1 ');
+}

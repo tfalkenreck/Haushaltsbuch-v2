@@ -160,9 +160,8 @@ Außerhalb des Umfangs: Gemeinschaftskonto und geteilte Kosten.
 
 **Exakte Formate, Spalten-Mapping und Besonderheiten je Bank: `docs/bankformate.md` – vor jeder Arbeit an Adaptern lesen.**
 
-**Adapter-Interface pro Bank.** Benötigt: Volksbank OWL (Girokonto/Sparkonto),
-Comdirect, Volksbank-Visa (Format evtl. identisch mit dem Girokonto – prüfen,
-sobald eine echte Datei vorliegt; sonst eigener Adapter). CAMT.053 als
+**Adapter-Interface pro Bank.** Vorhanden: `volksbank-owl` (Girokonto,
+Sparkonto und Visa – gleiches Format, siehe § 19), `comdirect`. CAMT.053 als
 normierter Standardweg ist optional für später. Eine Banking-API
 (FinTS/PSD2) ist außerhalb des Umfangs, muss aber später hinter dasselbe
 Interface passen.
@@ -190,7 +189,7 @@ Normalisierung, Regeln und Umbuchungserkennung passieren zentral danach.
   mehrfach importieren erzeugt keine doppelten Buchungen.
 - **Fehlermeldungen** nennen den verwendeten Adapter und die verfügbaren
   Alternativen („Comdirect-Adapter erkennt keine Kopfzeile. Verfügbar:
-  volksbank-owl, volksbank-visa“).
+  volksbank-owl.“).
 - **Abdeckung:** pro Konto anzeigen, für welche Monate Buchungen vorliegen
   und wo Lücken sind. Warnung, wenn eine Datei einen bereits abgedeckten
   Zeitraum überlappt oder eine Lücke offen lässt.
@@ -468,7 +467,7 @@ schwankende Schreibweise der Gegenpartei).
 |-------|--------|--------|
 | 0 | Spezifikation (diese Datei) und Projektgerüst | erledigt |
 | 1 | Datenmodell (Migration 001), Migrationsrunner, Konten mit Rolle und wählbarem Adapter | erledigt |
-| 2 | Import: Adapter-Interface, Volksbank OWL, Comdirect, Duplikaterkennung, Abdeckung, Rückgängig, Transaktionsliste | offen |
+| 2 | Import: Adapter-Interface, Volksbank OWL, Comdirect, Duplikaterkennung, Abdeckung, Rückgängig, Transaktionsliste | erledigt |
 | 3 | Kategorisierung: Kategorien, Regeln, manuelles Umkategorisieren, Lernen aus Korrekturen | offen |
 | 4 | Umbuchungen und Kreditkarte | offen |
 | 5 | Deckungsprüfung und Ausgaben am Ausgabenkonto vorbei | offen |
@@ -534,6 +533,22 @@ Status nach Abschluss einer Phase hier aktualisieren.
 | Migrationsschutz | Runner speichert SHA-256 jeder Migration (Zeilenenden normalisiert) und bricht ab, wenn eine angewendete Datei geändert wurde |
 | IBAN | Normalisiert (ohne Leerzeichen, groß) gespeichert, Prüfziffer (Mod 97) geprüft, je IBAN höchstens ein Konto |
 | API-Format | JSON in camelCase (`bankAdapter`), DB in snake_case |
+
+**Getroffen in Phase 2 (3. Oktober 2026)**
+
+| Frage | Entscheidung |
+|-------|--------------|
+| Volksbank-Visa-Adapter | Kein eigener Adapter: `volksbank-owl` liest Giro, Sparkonto und Visa. Kartenbesonderheiten greifen am **Inhalt der Zeile** (leerer „Name Zahlungsbeteiligter“ → Händler aus dem Verwendungszweck, „Umsatz vom“ → `booking_date`), nie an Konto, Rolle oder Name. Migration 003 stellt Konten mit `volksbank-visa` auf `volksbank-owl` um |
+| Zusatzfelder (Migration 003) | `transactions`: `booking_text` (Vorgangsart), `creditor_id`, `mandate_reference`, `balance_after_cents`, `bank_reference` (Comdirect „Ref.“); Gegen-IBAN steckt schon in `counterparty_iban`. `import_batches`: `balance_cents`/`balance_date` (Kontostand laut Datei), `rows_skipped` |
+| Hash-Text | `import_hash` = SHA-256 über JSON `[account_id, booking_date, amount_cents, purpose, laufende Nummer]`; `purpose` ist der Verwendungszweck nach dem Parsen (Comdirect ohne `Ref.`) |
+| Kontosaldo in der Übersicht | Aus dem jüngsten Importvorgang mit Saldo (nach `balance_date`): Volksbank = Saldo der jüngsten Zeile laut Saldo-Kette, Comdirect = „Neuer Kontostand“ aus den Metadaten |
+| Saldo-Kette | Volksbank: Saldo_vorher + Betrag = Saldo_nachher wird je Auftragskonto geprüft; Brüche erscheinen als Warnung („fehlt dort eine Buchung?“), der Import läuft trotzdem |
+| Auftragskonto-Prüfung | IBAN am Konto: nur passende Zeilen, Rest gemeldet; gehört die ganze Datei zu einem anderen Konto → Abbruch. Ohne IBAN am Konto: Import mit Hinweis; mehrere Auftragskonten oder IBAN eines anderen angelegten Kontos → Abbruch |
+| Abdeckung | Grundlage sind die Zeiträume der Importvorgänge (nicht nur Buchungstage). Ohne Angabe gilt erste bis letzte Buchung der Datei; beim Import kann der Exportzeitraum angegeben werden, damit buchungsfreie Tage am Rand keine Scheinlücke erzeugen. Monate: vollständig / teilweise / fehlt, bis zum aktuellen Monat |
+| Nichts Neues in der Datei | Kein leerer Importvorgang, nur Meldung |
+| Comdirect-Tabellenende | Die erste Zeile nach der Kopfzeile, die keine Buchung ist (Leerzeilen ausgenommen), beendet die Tabelle; alles danach wird gemeldet, eine zweite Tabelle mit Warnung. `offen`-Zeilen → „vorgemerkt“, nicht importiert. Bankentgelte ohne `Auftraggeber:` → Gegenpartei `comdirect` |
+| Windows-1252 | Eigene Dekodiertabelle statt `TextDecoder`: Node 22 dekodiert 0x80–0x9F (€, –, „“) als Steuerzeichen. „ISO-8859-1“ wird wie im Web-Standard als Windows-1252 gelesen |
+| Datei-Upload | Rohe Bytes (`application/octet-stream`), keine Multipart-Abhängigkeit; das Encoding bestimmt allein der Adapter |
 
 **Offene Punkte**
 

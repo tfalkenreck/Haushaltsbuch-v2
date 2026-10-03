@@ -1,0 +1,13 @@
+;
+"Umsätze Girokonto";"Zeitraum: 30 Tage";
+"Neuer Kontostand";"1.234,56 EUR";
+
+"Buchungstag";"Wertstellung (Valuta)";"Vorgang";"Buchungstext";"Umsatz in EUR";
+"offen";"03.10.2026";"Lastschrift / Belastung";"Auftraggeber: Beispiel Streaming GmbH Buchungstext: Abo Oktober Ref. 4A4B4C4D4E4F4G4H/66666";"-9,99";
+"02.10.2026";"02.10.2026";"Übertrag / Überweisung";"Empfänger: Erika Musterfrau Kto/IBAN: DE02120300000000202051 BLZ/BIC: BYLADEM1001 Buchungstext: Geschenk; danke für alles Ref. 5A5B5C5D5E5F5G5H/77777";"-50,00";
+
+"01.10.2026";"01.10.2026";"Übertrag / Überweisung";"Auftraggeber: Max Mustermann Buchungstext: Dauerauftrag
+Ausgabenkonto Ref. 6A6B6C6D6E6F6G6H/88888";"1.234,56";
+"01.10.2026";"01.10.2026";"Lastschrift / Belastung";"Auftraggeber: B+V Lebensversicherung AG Niederlassung Luxemburg Buchungstext: 0000000 Tarif Plus lfd. Btr OP00000000 01.10.2026 - 01. 11.2026 Ref. 2A2B2C2D2E2F2G2H/44444";"-100,00";
+
+"Alter Kontostand";"200,00 EUR";

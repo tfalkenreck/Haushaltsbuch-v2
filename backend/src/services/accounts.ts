@@ -16,6 +16,13 @@ export interface Account {
   active: boolean;
   createdAt: string;
   updatedAt: string;
+  /** Kontostand laut jüngstem Import, der einen nennt. */
+  balanceCents: number | null;
+  balanceDate: string | null;
+  /** Von Importen abgedeckter Zeitraum (frühester Beginn bis spätestes Ende). */
+  coverageStart: string | null;
+  coverageEnd: string | null;
+  transactionCount: number;
 }
 
 export interface AccountInput {
@@ -42,7 +49,26 @@ interface AccountRow {
   active: number;
   created_at: string;
   updated_at: string;
+  balance_cents: number | null;
+  balance_date: string | null;
+  coverage_start: string | null;
+  coverage_end: string | null;
+  transaction_count: number;
 }
+
+/** Konto plus Kennzahlen für die Übersicht (Saldo, Abdeckung, Anzahl Buchungen). */
+const ACCOUNT_SELECT = `
+  SELECT a.*,
+         lb.balance_cents, lb.balance_date,
+         (SELECT min(period_start) FROM import_batches b WHERE b.account_id = a.id) AS coverage_start,
+         (SELECT max(period_end) FROM import_batches b WHERE b.account_id = a.id) AS coverage_end,
+         (SELECT count(*) FROM transactions t WHERE t.account_id = a.id) AS transaction_count
+    FROM accounts a
+    LEFT JOIN import_batches lb ON lb.id = (
+      SELECT b.id FROM import_batches b
+       WHERE b.account_id = a.id AND b.balance_cents IS NOT NULL
+       ORDER BY b.balance_date DESC, b.id DESC LIMIT 1
+    )`;
 
 function toAccount(row: AccountRow): Account {
   return {
@@ -54,6 +80,11 @@ function toAccount(row: AccountRow): Account {
     active: row.active === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    balanceCents: row.balance_cents,
+    balanceDate: row.balance_date,
+    coverageStart: row.coverage_start,
+    coverageEnd: row.coverage_end,
+    transactionCount: row.transaction_count,
   };
 }
 
@@ -97,13 +128,13 @@ function assertIbanFree(db: Db, iban: string | null, ownId?: number): void {
 
 export function listAccounts(db: Db): Account[] {
   const rows = db
-    .prepare('SELECT * FROM accounts ORDER BY active DESC, name COLLATE NOCASE, id')
+    .prepare(`${ACCOUNT_SELECT} ORDER BY a.active DESC, a.name COLLATE NOCASE, a.id`)
     .all() as AccountRow[];
   return rows.map(toAccount);
 }
 
 export function getAccount(db: Db, id: number): Account {
-  const row = db.prepare('SELECT * FROM accounts WHERE id = ?').get(id) as AccountRow | undefined;
+  const row = db.prepare(`${ACCOUNT_SELECT} WHERE a.id = ?`).get(id) as AccountRow | undefined;
   if (!row) throw new AppError(`Konto ${id} existiert nicht.`, 404);
   return toAccount(row);
 }
