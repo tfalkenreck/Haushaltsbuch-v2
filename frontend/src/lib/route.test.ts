@@ -9,6 +9,12 @@ describe('parseHash', () => {
     expect(route.params.get('q')).toBe('miete');
   });
 
+  it('kennt die Seiten für Kategorien und Regeln', () => {
+    expect(parseHash('#/kategorien').page).toBe('kategorien');
+    expect(parseHash('#/regeln').page).toBe('regeln');
+    expect(parseHash('#/buchungen?uncategorized=1').params.get('uncategorized')).toBe('1');
+  });
+
   it('fällt auf die Kontenseite zurück', () => {
     expect(parseHash('').page).toBe('konten');
     expect(parseHash('#/unbekannt').page).toBe('konten');

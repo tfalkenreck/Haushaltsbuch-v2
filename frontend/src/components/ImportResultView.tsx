@@ -8,6 +8,7 @@ export function ImportResultView({ result }: { result: ImportResult }) {
     <div className="panel import-result">
       <p>
         <strong>{result.fileName}</strong>: {result.imported} neue Buchungen
+        {result.imported > 0 && ` (${result.categorized} per Regel kategorisiert)`}
         {result.duplicates > 0 && `, ${result.duplicates} bereits vorhanden`}
         {result.otherAccount > 0 && `, ${result.otherAccount} von einem anderen Konto`}. Zeitraum{' '}
         {formatDate(result.periodStart)} – {formatDate(result.periodEnd)}.

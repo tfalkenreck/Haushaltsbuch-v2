@@ -468,7 +468,7 @@ schwankende Schreibweise der Gegenpartei).
 | 0 | Spezifikation (diese Datei) und Projektgerüst | erledigt |
 | 1 | Datenmodell (Migration 001), Migrationsrunner, Konten mit Rolle und wählbarem Adapter | erledigt |
 | 2 | Import: Adapter-Interface, Volksbank OWL, Comdirect, Duplikaterkennung, Abdeckung, Rückgängig, Transaktionsliste | erledigt |
-| 3 | Kategorisierung: Kategorien, Regeln, manuelles Umkategorisieren, Lernen aus Korrekturen | offen |
+| 3 | Kategorisierung: Kategorien, Regeln, manuelles Umkategorisieren, Lernen aus Korrekturen | erledigt |
 | 4 | Umbuchungen und Kreditkarte | offen |
 | 5 | Deckungsprüfung und Ausgaben am Ausgabenkonto vorbei | offen |
 | 6 | Fixkosten/Abos manuell plus automatische Erkennung | offen |
@@ -550,8 +550,34 @@ Status nach Abschluss einer Phase hier aktualisieren.
 | Windows-1252 | Eigene Dekodiertabelle statt `TextDecoder`: Node 22 dekodiert 0x80–0x9F (€, –, „“) als Steuerzeichen. „ISO-8859-1“ wird wie im Web-Standard als Windows-1252 gelesen |
 | Datei-Upload | Rohe Bytes (`application/octet-stream`), keine Multipart-Abhängigkeit; das Encoding bestimmt allein der Adapter |
 
+**Korrektur Phase 2 (3. Oktober 2026)**
+
+| Frage | Entscheidung |
+|-------|--------------|
+| Visa: Kaufdatum vs. Buchungstag | `booking_date` bleibt das Kaufdatum (alle Auswertungen). Zusätzlich `transactions.bank_booking_date` = Buchungstag laut Bank (Migration 004). Exportzeitraum-Prüfung, abgeleiteter Zeitraum und Monatszählung der Abdeckung nutzen den Buchungstag, weil die Bank ihren Export danach filtert. Nicht im `import_hash` |
+| Altbestand ohne Buchungstag | Migration 004 übernimmt `booking_date` für Zeilen ohne „Umsatz vom“; Kartenumsätze bleiben `NULL`. Betroffene Importe/Konten tragen `needsReimport`, die Oberfläche bittet um Rückgängig + Neuimport |
+
+**Getroffen in Phase 3 (3. Oktober 2026)**
+
+| Frage | Entscheidung |
+|-------|--------------|
+| Mustertypen | `contains` = Suchtext, irgendwo enthalten, Groß-/Kleinschreibung egal, kein Zeichen mit Sonderbedeutung. `wildcard` = `*` beliebig viele, `?` genau ein Zeichen, Rest wörtlich, muss den **ganzen** Feldtext treffen. Beide: mehrfacher Leerraum/Zeilenumbruch zählt als ein Leerzeichen. Geprüft wird der Originaltext (nicht `counterparty_normalized`), damit `H&M` wörtlich gilt |
+| Regel-Reihenfolge | Höhere Priorität gewinnt, bei Gleichstand das längere Muster, dann die ältere Regel. Regeln mit deaktivierter Kategorie oder inaktive Regeln greifen nicht |
+| Wer wird kategorisiert | Regeln (beim Import und „Regeln anwenden“) setzen nur Buchungen mit `category_id IS NULL AND category_source IS NULL`. Auch per Regel gesetzte Kategorien werden nicht umgeworfen, wenn sich Regeln ändern |
+| Manuell | Setzen = `category_source 'manual'` (auch „bewusst keine Kategorie“). „Automatik zulassen“ hebt das auf und wendet die Regeln sofort auf die Buchung an |
+| Unkategorisiert | = `category_id IS NULL`, einschließlich „bewusst keine“ – sie fehlen ja trotzdem in jeder Kategorie-Auswertung. Anzahl und Summen (Zu-/Abflüsse getrennt) stehen auf jeder Seite |
+| Regelvorschlag | Nach manueller Kategorisierung: Suchtext auf die Gegenpartei (leer → Verwendungszweck), Wörter bis zur ersten Ziffernfolge. Priorität = höchste Priorität aller anderen auf die Buchung passenden Regeln + 1. Gleiches Muster vorhanden → diese Regel wird geändert statt eine zweite angelegt. Kein Vorschlag, wenn die bestehenden Regeln schon so entscheiden. Angelegt wird nur auf Knopfdruck; „gleich anwenden“ wirkt nur auf unkategorisierte Buchungen, bei denen die neue Regel gewinnt |
+| Regel löschen | Wahlweise mit Entfernen der von ihr gesetzten Kategorien; Handarbeit bleibt immer |
+| Kategorien | Zwei Ebenen. Löschen nur unbenutzt (keine Buchungen, Regeln, Unterkategorien, Fixkosten), sonst deaktivieren. Name je Ebene eindeutig (ohne Groß-/Kleinschreibung). Neue Unterkategorie erbt standardmäßig; eine Wurzel, die Unterkategorie wird, behält ihren Bucket |
+| Kategorie-Filter | Filter auf eine Wurzel schließt ihre Unterkategorien ein |
+
 **Offene Punkte**
 
+- **Regelvorschlag bei bereits per Regel falsch einsortierten Buchungen:**
+  Laut § 9 wendet „Regeln anwenden“ nur auf unkategorisierte Buchungen an.
+  Der Vorschlag nennt deshalb nur die Anzahl der Buchungen, die eine
+  andere Regel anders einsortiert hat; sie bleiben unverändert. Klären, ob
+  dafür ein ausdrücklicher „auch diese umstellen“-Knopf gewünscht ist.
 - **Encoding der Exporte** (Volksbank, Comdirect) und Comdirect-Metadaten-
   bzw. „offen“-Zeilen noch ungeprüft – siehe `docs/bankformate.md` § 4.
 - **Rollup-Pin per `overrides` (`rollup@4.63.6`):** Rollup 4.64.0

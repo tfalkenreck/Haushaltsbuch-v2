@@ -1,4 +1,7 @@
 import { apiRequest, query } from './client';
+import type { RuleSuggestion } from './rules';
+
+export type CategorySource = 'manual' | 'rule' | 'auto';
 
 export interface Transaction {
   id: number;
@@ -16,6 +19,10 @@ export interface Transaction {
   mandateReference: string | null;
   balanceAfterCents: number | null;
   importBatchId: number | null;
+  categoryId: number | null;
+  categoryPath: string | null;
+  categorySource: CategorySource | null;
+  categoryRuleId: number | null;
 }
 
 export interface TransactionPage {
@@ -33,9 +40,31 @@ export interface TransactionFilter {
   from?: string | undefined;
   to?: string | undefined;
   q?: string | undefined;
+  categoryId?: number | undefined;
+  uncategorized?: boolean | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
 }
 
-export const fetchTransactions = (filter: TransactionFilter) =>
-  apiRequest<TransactionPage>('GET', `/transactions${query({ ...filter })}`);
+export interface UncategorizedSummary {
+  count: number;
+  inflowCents: number;
+  outflowCents: number;
+}
+
+export interface CategoryChange {
+  transaction: Transaction;
+  suggestion: RuleSuggestion | null;
+}
+
+export const fetchTransactions = ({ uncategorized, ...filter }: TransactionFilter) =>
+  apiRequest<TransactionPage>('GET', `/transactions${query({ ...filter, uncategorized: uncategorized ? 'true' : undefined })}`);
+
+export const fetchUncategorizedSummary = () => apiRequest<UncategorizedSummary>('GET', '/transactions/uncategorized');
+
+/** Kategorie von Hand setzen; `null` = bewusst keine Kategorie. */
+export const setTransactionCategory = (id: number, categoryId: number | null) =>
+  apiRequest<CategoryChange>('PUT', `/transactions/${id}/category`, { categoryId });
+
+/** Handarbeit aufheben – Regeln dürfen die Buchung wieder einordnen. */
+export const resetTransactionCategory = (id: number) => apiRequest<Transaction>('DELETE', `/transactions/${id}/category`);

@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 
-export type Page = 'konten' | 'import' | 'buchungen';
+export type Page = 'konten' | 'import' | 'buchungen' | 'kategorien' | 'regeln';
 
 export interface Route {
   page: Page;
   params: URLSearchParams;
 }
 
-const PAGES: readonly Page[] = ['konten', 'import', 'buchungen'];
+const PAGES: readonly Page[] = ['konten', 'import', 'buchungen', 'kategorien', 'regeln'];
 
 /** `#/buchungen?accountId=3` → { page: 'buchungen', params }. Unbekannt → Konten. */
 export function parseHash(hash: string): Route {

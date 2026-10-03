@@ -14,6 +14,7 @@ export interface ImportResult {
   periodEnd: string | null;
   rowsTotal: number;
   imported: number;
+  categorized: number;
   duplicates: number;
   otherAccount: number;
   pending: SkippedLine[];

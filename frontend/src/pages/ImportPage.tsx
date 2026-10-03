@@ -11,6 +11,7 @@ import {
 } from '../api/imports';
 import { CoverageView } from '../components/CoverageView';
 import { ImportResultView } from '../components/ImportResultView';
+import { notifyDataChanged } from '../lib/events';
 import { formatCents, formatDate, formatTimestamp } from '../lib/format';
 import { hrefFor } from '../lib/route';
 
@@ -79,6 +80,7 @@ export function ImportPage({ params }: Props) {
       setPeriodStart('');
       setPeriodEnd('');
       reloadAccountData();
+      notifyDataChanged();
     } catch (err) {
       setError(message(err));
     } finally {
@@ -98,6 +100,7 @@ export function ImportPage({ params }: Props) {
       const undo = await undoImport(batch.id);
       setUndoMessages([`${undo.deletedTransactions} Buchungen entfernt.`, ...undo.warnings]);
       reloadAccountData();
+      notifyDataChanged();
     } catch (err) {
       setError(message(err));
     }

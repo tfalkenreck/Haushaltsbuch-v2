@@ -1,6 +1,17 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { fetchAccounts, type Account } from '../api/accounts';
-import { fetchTransactions, type TransactionPage } from '../api/transactions';
+import { fetchCategories, type Category } from '../api/categories';
+import type { RuleSuggestion } from '../api/rules';
+import {
+  fetchTransactions,
+  resetTransactionCategory,
+  setTransactionCategory,
+  type Transaction,
+  type TransactionPage,
+} from '../api/transactions';
+import { RuleSuggestionView } from '../components/RuleSuggestionView';
+import { TransactionCategoryCell } from '../components/TransactionCategoryCell';
+import { notifyDataChanged } from '../lib/events';
 import { formatCents, formatDate } from '../lib/format';
 import { hrefFor } from '../lib/route';
 
@@ -24,6 +35,8 @@ function filterFromParams(params: URLSearchParams) {
     from: params.get('from') ?? undefined,
     to: params.get('to') ?? undefined,
     q: params.get('q') ?? undefined,
+    categoryId: num('categoryId'),
+    uncategorized: params.get('uncategorized') === '1' ? true : undefined,
     offset: num('offset') ?? 0,
   };
 }
@@ -36,10 +49,17 @@ export function TransactionsPage({ params }: Props) {
   const [page, setPage] = useState<TransactionPage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState(filter.q ?? '');
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [suggestion, setSuggestion] = useState<RuleSuggestion | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchAccounts()
-      .then(setAccounts)
+    Promise.all([fetchAccounts(), fetchCategories()])
+      .then(([a, c]) => {
+        setAccounts(a);
+        setCategories(c);
+      })
       .catch((err: unknown) => setError(message(err)));
   }, []);
 
@@ -59,9 +79,55 @@ export function TransactionsPage({ params }: Props) {
       from: next.from,
       to: next.to,
       q: next.q,
+      categoryId: next.categoryId,
+      uncategorized: next.uncategorized ? 1 : undefined,
       offset: next.offset || undefined,
     });
   };
+
+  const replaceItem = (updated: Transaction) =>
+    setPage((current) =>
+      current ? { ...current, items: current.items.map((t) => (t.id === updated.id ? updated : t)) } : current,
+    );
+
+  async function changeCategory(t: Transaction, categoryId: number | null) {
+    setBusyId(t.id);
+    setError(null);
+    setInfo(null);
+    setSuggestion(null);
+    try {
+      const change = await setTransactionCategory(t.id, categoryId);
+      replaceItem(change.transaction);
+      setSuggestion(change.suggestion);
+      notifyDataChanged();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function resetCategory(t: Transaction) {
+    setBusyId(t.id);
+    setError(null);
+    try {
+      replaceItem(await resetTransactionCategory(t.id));
+      notifyDataChanged();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  /** Nach angenommenem Regelvorschlag: Liste neu laden (die Regel hat ggf. weitere Buchungen eingeordnet). */
+  function reload() {
+    fetchTransactions({ ...filter, limit: PAGE_SIZE })
+      .then(setPage)
+      .catch((err: unknown) => setError(message(err)));
+  }
+
+  const categoryFilterValue = filter.uncategorized ? 'none' : filter.categoryId !== undefined ? String(filter.categoryId) : '';
 
   function handleSearch(event: FormEvent) {
     event.preventDefault();
@@ -97,6 +163,27 @@ export function TransactionsPage({ params }: Props) {
           <input type="date" value={filter.to ?? ''} onChange={(e) => navigate({ to: e.target.value || undefined })} />
         </label>
         <label>
+          Kategorie
+          <select
+            value={categoryFilterValue}
+            onChange={(e) => {
+              const v = e.target.value;
+              navigate({
+                uncategorized: v === 'none' ? true : undefined,
+                categoryId: v === '' || v === 'none' ? undefined : Number(v),
+              });
+            }}
+          >
+            <option value="">alle Kategorien</option>
+            <option value="none">nur unkategorisierte</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.parentId === null ? c.name : `\u00a0\u00a0\u00a0${c.name}`}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
           Suche (Gegenpartei, Verwendungszweck, Vorgang)
           <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} />
         </label>
@@ -114,6 +201,19 @@ export function TransactionsPage({ params }: Props) {
       </form>
 
       {error && <p className="error">{error}</p>}
+      {info && <p className="panel notice">{info}</p>}
+      {suggestion && (
+        <RuleSuggestionView
+          key={`${suggestion.categoryId}-${suggestion.pattern}`}
+          suggestion={suggestion}
+          onDismiss={() => setSuggestion(null)}
+          onDone={(text) => {
+            setSuggestion(null);
+            setInfo(text);
+            reload();
+          }}
+        />
+      )}
 
       {page && (
         <>
@@ -134,6 +234,7 @@ export function TransactionsPage({ params }: Props) {
                   <th>Konto</th>
                   <th>Gegenpartei</th>
                   <th>Verwendungszweck</th>
+                  <th>Kategorie</th>
                   <th className="num">Betrag</th>
                   <th className="num">Saldo</th>
                 </tr>
@@ -148,6 +249,15 @@ export function TransactionsPage({ params }: Props) {
                       {t.bookingText && <small className="muted block">{t.bookingText}</small>}
                     </td>
                     <td className="purpose">{t.purpose}</td>
+                    <td>
+                      <TransactionCategoryCell
+                        transaction={t}
+                        categories={categories}
+                        busy={busyId === t.id}
+                        onSet={(categoryId) => void changeCategory(t, categoryId)}
+                        onReset={() => void resetCategory(t)}
+                      />
+                    </td>
                     <td className={`num ${t.amountCents < 0 ? 'amount-out' : 'amount-in'}`}>
                       {formatCents(t.amountCents, { sign: true })}
                     </td>

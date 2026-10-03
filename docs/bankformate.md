@@ -85,7 +85,11 @@ Besonderheiten der Kartenumsätze:
   Verwendungszweck nennt Originalbetrag und Gebühr.
 - **Echtes Umsatzdatum** im Verwendungszweck (`Umsatz vom 30.09.2026`),
   abweichend von Buchungstag und Valuta. **Entschieden:** dieses Datum ist
-  `booking_date` (Monatszuordnung, § 11 Zeitversatz).
+  `booking_date` (Monatszuordnung, § 11 Zeitversatz). Der **Buchungstag der
+  Bank** wird zusätzlich als `bank_booking_date` gespeichert (Migration 004):
+  Die Bank filtert ihren Export nach dem Buchungstag, deshalb richten sich
+  Exportzeitraum-Prüfung und Abdeckung nach ihm (Kauf vom 29.12., gebucht am
+  02.01., gehört zum Januar-Export).
 - `Saldo nach Buchung` ist negativ = offener Kartenbetrag.
 - `IBAN Auftragskonto` ist eine eigene Kontonummer der Karte (Format wie
   IBAN).
@@ -206,3 +210,4 @@ bauen, dass unbekannte Labels nicht verloren gehen (Rest landet in
       Parser deckt beides ab, beim ersten echten Import verifizieren
 - [x] Visa: `Umsatz vom`-Datum ist `booking_date`, Valutadatum ist
       `value_date`. Fehlt `Umsatz vom` im Text, Buchungstag verwenden.
+      Buchungstag der Bank steht immer in `bank_booking_date`.

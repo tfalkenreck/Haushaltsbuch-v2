@@ -228,3 +228,93 @@ ol.coverage li {
 .nowrap {
   white-space: nowrap;
 }
+
+/* --- Kategorisierung (Phase 3) -------------------------------------------- */
+.uncategorized-banner {
+  background: #fff8c5;
+  border: 1px solid #d4a72c;
+  padding: 0.5rem 0.75rem;
+  margin: 0 0 1rem;
+}
+
+.uncategorized-banner.done {
+  background: #dafbe1;
+  border-color: #4ac26b;
+}
+
+.toolbar {
+  margin: 0.5rem 0 1rem;
+}
+
+.rule-form,
+.inline-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.rule-form label,
+.inline-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.rule-form .hint,
+.rule-form .error,
+.rule-form .preview {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.preview ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.25rem;
+}
+
+td.pattern {
+  font-family: ui-monospace, Consolas, monospace;
+  white-space: pre-wrap;
+}
+
+td.category-root {
+  font-weight: 600;
+}
+
+td.category-child {
+  padding-left: 1.75rem !important;
+}
+
+.category-cell select {
+  max-width: 14rem;
+}
+
+.category-cell select.uncategorized {
+  border-color: #d4a72c;
+  background: #fff8c5;
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #0969da;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+
+.suggestion input:not([type="checkbox"]) {
+  min-width: 14rem;
+}
+
+label.inline {
+  display: block;
+  margin: 0.5rem 0;
+}
+
+table.data tr.inactive td {
+  color: #8c959f;
+}

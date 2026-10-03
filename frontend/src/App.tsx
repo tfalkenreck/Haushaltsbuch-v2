@@ -1,5 +1,8 @@
+import { UncategorizedBanner } from './components/UncategorizedBanner';
 import { AccountsPage } from './pages/AccountsPage';
+import { CategoriesPage } from './pages/CategoriesPage';
 import { ImportPage } from './pages/ImportPage';
+import { RulesPage } from './pages/RulesPage';
 import { TransactionsPage } from './pages/TransactionsPage';
 import { hrefFor, useRoute, type Page } from './lib/route';
 
@@ -7,6 +10,8 @@ const NAV: { page: Page; label: string }[] = [
   { page: 'konten', label: 'Konten' },
   { page: 'import', label: 'Import' },
   { page: 'buchungen', label: 'Buchungen' },
+  { page: 'kategorien', label: 'Kategorien' },
+  { page: 'regeln', label: 'Regeln' },
 ];
 
 export function App() {
@@ -24,9 +29,12 @@ export function App() {
           ))}
         </nav>
       </header>
+      <UncategorizedBanner routeKey={`${route.page}?${route.params.toString()}`} />
       {route.page === 'konten' && <AccountsPage />}
       {route.page === 'import' && <ImportPage params={route.params} />}
       {route.page === 'buchungen' && <TransactionsPage params={route.params} />}
+      {route.page === 'kategorien' && <CategoriesPage />}
+      {route.page === 'regeln' && <RulesPage />}
     </main>
   );
 }
