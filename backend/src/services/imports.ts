@@ -9,6 +9,7 @@ import { normalizeCounterparty } from '../lib/normalize.js';
 import { nowIso } from '../lib/time.js';
 import { getAccount, type Account } from './accounts.js';
 import { coveredPeriods, gapsBetween, mergePeriods, type Period } from './coverage.js';
+import { applyRules } from './rules.js';
 
 export interface ImportInput {
   accountId: number;
@@ -32,6 +33,8 @@ export interface ImportResult {
   periodEnd: string | null;
   rowsTotal: number;
   imported: number;
+  /** Davon durch Regeln kategorisiert. */
+  categorized: number;
   duplicates: number;
   /** Zeilen eines anderen Auftragskontos. */
   otherAccount: number;
@@ -285,6 +288,7 @@ export function importFile(db: Db, input: ImportInput): ImportResult {
     periodEnd: period.end,
     rowsTotal,
     imported: fresh.length,
+    categorized: 0,
     duplicates,
     otherAccount,
     pending: parsed.pending,
@@ -353,6 +357,8 @@ export function importFile(db: Db, input: ImportInput): ImportResult {
       );
     }
     result.batchId = batchId;
+    // Regeln laufen beim Import automatisch (CLAUDE.md § 9).
+    result.categorized = applyRules(db, { importBatchId: batchId });
   })();
 
   return result;

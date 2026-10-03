@@ -2,7 +2,9 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Db } from './db/connection.js';
 import { AppError } from './lib/errors.js';
 import { accountRoutes } from './routes/accounts.js';
+import { categoryRoutes } from './routes/categories.js';
 import { importRoutes } from './routes/imports.js';
+import { ruleRoutes } from './routes/rules.js';
 import { transactionRoutes } from './routes/transactions.js';
 
 export interface AppOptions {
@@ -35,6 +37,8 @@ export function buildApp(options: AppOptions): FastifyInstance {
   accountRoutes(app, options.db);
   importRoutes(app, options.db);
   transactionRoutes(app, options.db);
+  categoryRoutes(app, options.db);
+  ruleRoutes(app, options.db);
 
   return app;
 }
