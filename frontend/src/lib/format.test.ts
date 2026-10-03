@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatCents, formatDate, formatMonth } from './format';
+import { addMonthsIso, centsToInput, formatCents, formatDate, formatMonth } from './format';
 
 describe('formatCents', () => {
   it.each([
@@ -24,5 +24,15 @@ describe('formatDate / formatMonth', () => {
     expect(formatDate('2026-10-02')).toBe('02.10.2026');
     expect(formatDate(null)).toBe('–');
     expect(formatMonth('2026-03')).toBe('Mär 2026');
+  });
+});
+
+describe('centsToInput / addMonthsIso', () => {
+  it('belegt Betragsfelder vor und rechnet Termine', () => {
+    expect(centsToInput(1299)).toBe('12,99');
+    expect(centsToInput(5)).toBe('0,05');
+    expect(centsToInput(123456)).toBe('1234,56');
+    expect(addMonthsIso('2026-01-31', 1)).toBe('2026-02-28');
+    expect(addMonthsIso('2026-11-15', 3)).toBe('2027-02-15');
   });
 });

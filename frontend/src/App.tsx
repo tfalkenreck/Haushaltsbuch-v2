@@ -3,6 +3,7 @@ import { AccountsPage } from './pages/AccountsPage';
 import { CategoriesPage } from './pages/CategoriesPage';
 import { FundingPage } from './pages/FundingPage';
 import { ImportPage } from './pages/ImportPage';
+import { RecurringPage } from './pages/RecurringPage';
 import { RulesPage } from './pages/RulesPage';
 import { TransactionsPage } from './pages/TransactionsPage';
 import { TransfersPage } from './pages/TransfersPage';
@@ -14,6 +15,7 @@ const NAV: { page: Page; label: string }[] = [
   { page: 'buchungen', label: 'Buchungen' },
   { page: 'umbuchungen', label: 'Umbuchungen' },
   { page: 'deckung', label: 'Deckung' },
+  { page: 'fixkosten', label: 'Fixkosten & Abos' },
   { page: 'kategorien', label: 'Kategorien' },
   { page: 'regeln', label: 'Regeln' },
 ];
@@ -39,6 +41,7 @@ export function App() {
       {route.page === 'buchungen' && <TransactionsPage params={route.params} />}
       {route.page === 'umbuchungen' && <TransfersPage params={route.params} />}
       {route.page === 'deckung' && <FundingPage params={route.params} />}
+      {route.page === 'fixkosten' && <RecurringPage params={route.params} />}
       {route.page === 'kategorien' && <CategoriesPage />}
       {route.page === 'regeln' && <RulesPage />}
     </main>

@@ -2,6 +2,7 @@ import type { Db } from '../db/connection.js';
 import { AppError } from '../lib/errors.js';
 import { normalizeCounterparty } from '../lib/normalize.js';
 import { assertAssignableCategory } from './categories.js';
+import { recurringAssignments, type RecurringAssignment } from './recurring.js';
 import { applyRules, suggestRule, type RuleSuggestion } from './rules.js';
 import type { TransferKind, TransferStatus } from './transfers.js';
 
@@ -26,6 +27,8 @@ export interface TransactionFilter {
   uncategorized?: boolean | undefined;
   /** only = nur Umbuchungen, exclude = ohne Umbuchungen. */
   transfers?: 'only' | 'exclude' | undefined;
+  /** Nur Buchungen, die zu dieser Fixkostenposition bzw. diesem Abo gehören. */
+  recurringItemId?: number | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
 }
@@ -60,6 +63,11 @@ export interface TransactionItem {
   transferSource: 'manual' | 'auto' | null;
   /** Das andere beteiligte Konto, falls bekannt. */
   transferAccountName: string | null;
+  /** Fixkosten/Abo, zu dem die Buchung gehört (von Hand oder über die Merkmale des Postens). */
+  recurringItemId: number | null;
+  recurringItemName: string | null;
+  /** manual = von Hand (ohne Posten: bewusst „nicht wiederkehrend“), auto = über die Merkmale, null = keins. */
+  recurringSource: 'manual' | 'auto' | null;
 }
 
 export interface TransactionPage {
@@ -101,6 +109,7 @@ interface Row {
   transfer_status: TransferStatus | null;
   transfer_source: 'manual' | 'auto' | null;
   transfer_account_name: string | null;
+  recurring_source: 'manual' | null;
 }
 
 const ITEM_SELECT = `
@@ -114,7 +123,9 @@ const ITEM_SELECT = `
     LEFT JOIN transfers tr ON tr.id = t.transfer_id
     LEFT JOIN accounts oa ON oa.id = CASE WHEN tr.from_account_id = t.account_id THEN tr.to_account_id ELSE tr.from_account_id END`;
 
-function toItem(r: Row): TransactionItem {
+function toItem(r: Row, recurring: ReadonlyMap<number, RecurringAssignment>): TransactionItem {
+  const assignment = recurring.get(r.id);
+  const manualNone = r.recurring_source === 'manual' && !assignment;
   return {
     id: r.id,
     accountId: r.account_id,
@@ -140,13 +151,16 @@ function toItem(r: Row): TransactionItem {
     transferStatus: r.transfer_status,
     transferSource: r.transfer_source,
     transferAccountName: r.transfer_account_name,
+    recurringItemId: assignment?.itemId ?? null,
+    recurringItemName: assignment?.itemName ?? null,
+    recurringSource: manualNone ? 'manual' : (assignment?.source ?? null),
   };
 }
 
 export function getTransaction(db: Db, id: number): TransactionItem {
   const row = db.prepare(`${ITEM_SELECT} WHERE t.id = ?`).get(id) as Row | undefined;
   if (!row) throw new AppError(`Buchung ${id} existiert nicht.`, 404);
-  return toItem(row);
+  return toItem(row, recurringAssignments(db));
 }
 
 function escapeLike(text: string): string {
@@ -188,6 +202,11 @@ export function listTransactions(db: Db, filter: TransactionFilter): Transaction
   if (filter.uncategorized) where.push('t.category_id IS NULL AND t.transfer_id IS NULL');
   if (filter.transfers === 'only') where.push('t.transfer_id IS NOT NULL');
   if (filter.transfers === 'exclude') where.push('t.transfer_id IS NULL');
+  const recurring = recurringAssignments(db);
+  if (filter.recurringItemId !== undefined) {
+    const ids = [...recurring].filter(([, a]) => a.itemId === filter.recurringItemId).map(([id]) => id);
+    where.push(ids.length > 0 ? `t.id IN (${ids.join(', ')})` : '0');
+  }
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
   const limit = Math.min(Math.max(filter.limit ?? 100, 1), 500);
   const offset = Math.max(filter.offset ?? 0, 0);
@@ -214,7 +233,7 @@ export function listTransactions(db: Db, filter: TransactionFilter): Transaction
     .all(...params, limit, offset) as Row[];
 
   return {
-    items: rows.map(toItem),
+    items: rows.map((r) => toItem(r, recurring)),
     total: totals.total,
     inflowCents: totals.inflow,
     outflowCents: totals.outflow,

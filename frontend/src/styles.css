@@ -409,3 +409,84 @@ ul.plain {
 ul.plain li {
   padding: 0.15rem 0;
 }
+
+/* --- Fixkosten und Abos (Phase 6) ------------------------------------------ */
+.recurring-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.recurring-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.recurring-form label.checkbox {
+  flex-direction: row;
+  align-items: center;
+}
+
+.recurring-form .wide,
+.recurring-form .form-actions {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.recurring-form .inline-pair {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.recurring-form .inline-pair input {
+  width: 4rem;
+}
+
+.tag {
+  display: inline-block;
+  padding: 0 0.35rem;
+  border-radius: 3px;
+  background: #eaeef2;
+  color: #57606a;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.tag-ok {
+  background: #dafbe1;
+  color: #1a7f37;
+}
+
+.tag-warn {
+  background: #fff8c5;
+  color: #7d4e00;
+}
+
+.tag-bad {
+  background: #ffebe9;
+  color: #cf222e;
+}
+
+.recurring-tag {
+  display: inline-block;
+  padding: 0 0.35rem;
+  border-radius: 3px;
+  background: #fbefff;
+  color: #8250df;
+  text-decoration: none;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+ul.attention {
+  margin: 0.25rem 0 0;
+  padding-left: 1.25rem;
+}
+
+table.occurrences {
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.85rem;
+}

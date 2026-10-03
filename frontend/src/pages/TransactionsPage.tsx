@@ -10,8 +10,10 @@ import {
   type TransactionPage,
 } from '../api/transactions';
 import { markTransfer, resetTransfer, unmarkTransfer } from '../api/transfers';
+import { fetchRecurring, resetTransactionRecurring, setTransactionRecurring, type RecurringItem } from '../api/recurring';
 import { RuleSuggestionView } from '../components/RuleSuggestionView';
 import { TransactionCategoryCell } from '../components/TransactionCategoryCell';
+import { TransactionRecurringCell } from '../components/TransactionRecurringCell';
 import { TransactionTransferCell } from '../components/TransactionTransferCell';
 import { notifyDataChanged } from '../lib/events';
 import { formatCents, formatDate } from '../lib/format';
@@ -43,6 +45,7 @@ function filterFromParams(params: URLSearchParams) {
     categoryId: num('categoryId'),
     uncategorized: params.get('uncategorized') === '1' ? true : undefined,
     transfers: transferFilter,
+    recurringItemId: num('recurringItemId'),
     offset: num('offset') ?? 0,
   };
 }
@@ -59,12 +62,14 @@ export function TransactionsPage({ params }: Props) {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [suggestion, setSuggestion] = useState<RuleSuggestion | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [recurringItems, setRecurringItems] = useState<RecurringItem[]>([]);
 
   useEffect(() => {
-    Promise.all([fetchAccounts(), fetchCategories()])
-      .then(([a, c]) => {
+    Promise.all([fetchAccounts(), fetchCategories(), fetchRecurring()])
+      .then(([a, c, r]) => {
         setAccounts(a);
         setCategories(c);
+        setRecurringItems(r.items);
       })
       .catch((err: unknown) => setError(message(err)));
   }, []);
@@ -89,6 +94,7 @@ export function TransactionsPage({ params }: Props) {
       categoryId: next.categoryId,
       uncategorized: next.uncategorized ? 1 : undefined,
       transfers: next.transfers,
+      recurringItemId: next.recurringItemId,
       offset: next.offset || undefined,
     });
   };
@@ -128,7 +134,7 @@ export function TransactionsPage({ params }: Props) {
     }
   }
 
-  /** Umbuchung setzen/aufheben – betrifft ggf. auch die Gegenbuchung, daher neu laden. */
+  /** Umbuchung bzw. Fixkosten-Zuordnung setzen/aufheben – betrifft ggf. weitere Buchungen, daher neu laden. */
   async function changeTransfer(t: Transaction, action: () => Promise<unknown>) {
     setBusyId(t.id);
     setError(null);
@@ -233,6 +239,15 @@ export function TransactionsPage({ params }: Props) {
         <div className="form-actions">
           <button type="submit">Suchen</button>
         </div>
+        {filter.recurringItemId !== undefined && (
+          <p className="hint">
+            Nur Buchungen von „{recurringItems.find((i) => i.id === filter.recurringItemId)?.name ?? `Posten ${filter.recurringItemId}`}“
+            (Fixkosten/Abo).{' '}
+            <a href="#" onClick={(e) => { e.preventDefault(); navigate({ recurringItemId: undefined }); }}>
+              Filter entfernen
+            </a>
+          </p>
+        )}
         {filter.importBatchId !== undefined && (
           <p className="hint">
             Nur Buchungen aus Importvorgang {filter.importBatchId}.{' '}
@@ -290,6 +305,7 @@ export function TransactionsPage({ params }: Props) {
                   <th>Verwendungszweck</th>
                   <th>Kategorie</th>
                   <th>Umbuchung</th>
+                  <th>Fixkosten/Abo</th>
                   <th className="num">Betrag</th>
                   <th className="num">Saldo</th>
                 </tr>
@@ -321,6 +337,15 @@ export function TransactionsPage({ params }: Props) {
                         onMark={(accountId) => void changeTransfer(t, () => markTransfer(t.id, accountId))}
                         onUnmark={() => void changeTransfer(t, () => unmarkTransfer(t.id))}
                         onReset={() => void changeTransfer(t, () => resetTransfer(t.id))}
+                      />
+                    </td>
+                    <td>
+                      <TransactionRecurringCell
+                        transaction={t}
+                        items={recurringItems}
+                        busy={busyId === t.id}
+                        onSet={(itemId) => void changeTransfer(t, () => setTransactionRecurring(t.id, itemId))}
+                        onReset={() => void changeTransfer(t, () => resetTransactionRecurring(t.id))}
                       />
                     </td>
                     <td className={`num ${t.amountCents < 0 ? 'amount-out' : 'amount-in'}`}>

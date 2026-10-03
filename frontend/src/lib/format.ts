@@ -11,6 +11,22 @@ export function formatCents(cents: number, options: { sign?: boolean } = {}): st
   return `${prefix}${euros},${rest} €`;
 }
 
+/** Cent → Eingabetext ohne Währung („1234,56“), z. B. als Vorbelegung eines Betragsfelds. */
+export function centsToInput(cents: number): string {
+  const abs = Math.abs(cents);
+  return `${cents < 0 ? '-' : ''}${Math.trunc(abs / 100)},${String(abs % 100).padStart(2, '0')}`;
+}
+
+/** `YYYY-MM-DD` plus `months` Monate; der Tag wird aufs Monatsende begrenzt. */
+export function addMonthsIso(iso: string, months: number): string {
+  const index = Number(iso.slice(0, 4)) * 12 + Number(iso.slice(5, 7)) - 1 + months;
+  const year = Math.floor(index / 12);
+  const month = (index % 12) + 1;
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const day = Math.min(Number(iso.slice(8, 10)), last);
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
 /** `YYYY-MM-DD` → `TT.MM.JJJJ`. */
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return '–';

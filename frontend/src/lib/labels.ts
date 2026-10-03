@@ -1,6 +1,7 @@
 import type { AccountRole } from '../api/accounts';
 import type { Bucket } from '../api/categories';
 import type { Interval } from '../api/funding';
+import type { CheckStatus, NoticeUnit, RecurringKind } from '../api/recurring';
 import type { PatternType, RuleField } from '../api/rules';
 import type { TransferKind } from '../api/transfers';
 
@@ -61,3 +62,24 @@ export const BALANCE_SOURCE_LABELS = {
   import: 'Kontostand laut Datei',
   manual: 'von Hand erfasster Kontostand',
 } as const;
+
+export const RECURRING_KIND_LABELS: Record<RecurringKind, string> = {
+  fixed_cost: 'Fixkosten',
+  subscription: 'Abo',
+};
+
+export const NOTICE_UNIT_LABELS: Record<NoticeUnit, string> = {
+  days: 'Tage',
+  weeks: 'Wochen',
+  months: 'Monate',
+};
+
+export const CHECK_STATUS_LABELS: Record<CheckStatus, string> = {
+  ok: 'passt',
+  differs: 'Betrag weicht ab',
+  missing: 'Abbuchung fehlt',
+  ended: 'beendet?',
+  no_bookings: 'keine passende Buchung',
+  not_due: 'noch nichts fällig',
+  inactive: 'inaktiv',
+};

@@ -30,6 +30,11 @@ export interface Transaction {
   /** manual = von Hand (auch „bewusst keine Umbuchung“), auto = erkannt. */
   transferSource: 'manual' | 'auto' | null;
   transferAccountName: string | null;
+  /** Fixkosten/Abo, zu dem die Buchung gehört. */
+  recurringItemId: number | null;
+  recurringItemName: string | null;
+  /** manual = von Hand (ohne Posten: bewusst „nicht wiederkehrend“), auto = über die Merkmale des Postens. */
+  recurringSource: 'manual' | 'auto' | null;
 }
 
 export interface TransactionPage {
@@ -55,6 +60,7 @@ export interface TransactionFilter {
   categoryId?: number | undefined;
   uncategorized?: boolean | undefined;
   transfers?: 'only' | 'exclude' | undefined;
+  recurringItemId?: number | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
 }

@@ -30,6 +30,7 @@ const listQuery = {
     categoryId: { type: 'integer', minimum: 1 },
     uncategorized: { type: 'boolean' },
     transfers: { type: 'string', enum: ['only', 'exclude'] },
+    recurringItemId: { type: 'integer', minimum: 1 },
     limit: { type: 'integer', minimum: 1, maximum: 500 },
     offset: { type: 'integer', minimum: 0 },
   },

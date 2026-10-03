@@ -471,7 +471,7 @@ schwankende Schreibweise der Gegenpartei).
 | 3 | Kategorisierung: Kategorien, Regeln, manuelles Umkategorisieren, Lernen aus Korrekturen | erledigt |
 | 4 | Umbuchungen und Kreditkarte | erledigt |
 | 5 | Deckungsprüfung und Ausgaben am Ausgabenkonto vorbei | erledigt |
-| 6 | Fixkosten/Abos manuell plus automatische Erkennung | offen |
+| 6 | Fixkosten/Abos manuell plus automatische Erkennung | erledigt |
 | 7 | Dashboard, Budget, Prognose, Sparziele | offen |
 | 8 | Export/Re-Import, Startskript, Feinschliff | offen |
 
@@ -633,6 +633,22 @@ Anlass: Im Mai wurden die Daueraufträge umgestellt (fünf beendet, Beträge ge�
 | „Passt“ | Ist jeder Monat seit dem Start gedeckt und der Kontostand nicht gefallen (unbekannt zählt nicht als fallend): Empfehlung „passt, keine Änderung nötig“. Umzustellende Posten (§ 13) erhöhen nur um den Teil, der die kleinste monatliche Überdeckung übersteigt. Sonst Bedarf = Ø + Puffer + Umzustellendes (volle 10 €); liegt er nicht über dem aktuellen Betrag, passt es ebenfalls. Eine Senkung wird nicht empfohlen |
 | Unvollständige Monate | In der Monatsübersicht neutral: Differenz ohne Unter-/Überdeckung, ohne Balken |
 
+**Getroffen in Phase 6 (3. Oktober 2026)**
+
+| Frage | Entscheidung |
+|-------|--------------|
+| Datenmodell (Migration 007) | `recurring_items` + `creditor_id`, `mandate_reference`, `detection_key` (eindeutig), `notice_period_value`/`_unit` (Tage/Wochen/Monate, nur mit Vertragsende). `transactions.recurring_source`: `manual` mit `recurring_item_id` = von Hand zugeordnet, `manual` ohne = bewusst „nicht wiederkehrend“ (Fehlerkennung entfernt) |
+| Was gespeichert wird | Nur Menschenentscheidungen: angelegte/übernommene Posten (`confirmed`), verworfene Vorschläge (`dismissed`, über `detection_key` wiedererkannt; Löschen = wieder vorschlagen), Zuordnungen von Hand. Automatische Zuordnung von Buchungen und die Vorschläge werden bei jeder Anzeige neu berechnet – nach Import oder Rückgängig nie veraltet. Status `suggested` bleibt ungenutzt |
+| Schlüssel | PayPal ist nicht der Anbieter: Händler aus „Ihr Einkauf bei …“ (Lastschrift) bzw. Händlername der Karte („PAYPAL *AUDIBLE“) → beide `paypal audible`; Gläubiger-ID/Mandat von PayPal zählen nicht. Sonst Gläubiger-ID vor normalisierter Gegenpartei (Schreibweise egal), Mandatsreferenz trennt Verträge. Zweiter Durchgang je Anbieter ohne Mandat (wechselnde Mandatsreferenzen, z. B. girocard) |
+| Erkennung | Ketten je Intervall (14-tägig 12–16, monatlich 26–35, quartalsweise 84–98, halbjährlich 175–190, jährlich 350–380 Tage; doppelter Abstand = eine fehlende Abbuchung, höchstens eine je sechs Glieder, mindestens ein einfacher Abstand). Mindestanzahl 4/3/2/2/2. Betrag je Glied zwischen Hälfte und Doppeltem der Kette. Beide Lesarten (14-tägig zuerst / monatlich zuerst) werden versucht, gewählt wird die mit mehr erklärten Abbuchungen und weniger Reihen. Händler mit mehr weiteren Abbuchungen im Zeitraum als die Kette Glieder hat (Supermarkt): nur Ketten ab 3 Gliedern mit Beträgen ±2 % (mind. 0,50 €) |
+| Vermutet / beendet | Einzelne Abbuchung mit Jahresbeitrags-Hinweis („Jahresbeitrag“, „jährlich“, „Beitrag 2026“ …) = jährlich vermutet, solange der nächste Termin nicht verstrichen ist. Beendet = nächster Termin + Toleranz (14-tägig 4, monatlich 7, quartalsweise 14, halbjährlich 21, jährlich 31 Tage) vor dem Ende der Importe des Kontos |
+| Doppelte Abos | Mehrere Ketten unter einem Schlüssel bleiben getrennt (weitere mit `@d<Tag>` im Schlüssel). „Doppelt?“ = laufende Posten/Vorschläge mit gleichem Anbieter, gleichem Intervall, Betrag höchstens 25 % auseinander |
+| Zuordnung zu Posten | Von Hand fest; sonst bester Posten nach Rang: Erkennungsschlüssel Vertrag, Gläubiger-ID + Mandat, Erkennungsschlüssel Anbieter, Gläubiger-ID, Gegenpartei als ganze Wörter in der (PayPal-aufgelösten) Gegenpartei. Wo nur die Gegenpartei verbindet, muss der Betrag zwischen Hälfte und Doppeltem des Solls liegen. Gleichstand: Nähe zum Termin, dann Betrag. Umbuchungen und Gutschriften nie |
+| Soll/Ist | Termine aus nächstem Termin und Intervall (Monatsende ohne Drift). Je Termin die nächstgelegene Buchung in der Toleranz: passt / Betrag weicht ab / fehlt / nicht importiert (Importlücke). Ohne Buchung höchstens 3 Termine rückwirkend. Status: 1 fehlende am Ende = „fehlt“, 2 in Folge = „beendet?“, gar keine Buchung = „keine passende Buchung“. Passt der eingetragene Termin nicht zur letzten Buchung, wird nach deren Termin abgeglichen (Hinweis). Letzte zwei Abbuchungen gleich, aber ≠ Soll → Vorschlag „Soll anpassen“ |
+| Kündigung | Kündbar bis = Vertragsende minus Frist; Hinweis 60 Tage vorher, „verstrichen“, „Vertragsende vorbei – verlängert?“ |
+| Art | Vorschlag „Abo“ bei Kartenumsatz oder PayPal, sonst „Fixkosten“; beim Übernehmen wählbar. Monatswert: 14-tägig × 26/12, Quartal /3, Halbjahr /6, Jahr /12 |
+| § 13 | „Ausgaben am Ausgabenkonto vorbei“ nutzt weiter die schlichte Erkennung aus Phase 5 (`recurring-debits.ts`) |
+
 **Offene Punkte**
 
 - **Deckungsprüfung an echten Daten prüfen:** Erkennung der Daueraufträge
@@ -681,10 +697,17 @@ Anlass: Im Mai wurden die Daueraufträge umgestellt (fünf beendet, Beträge ge�
   erfassten Kontostand mit Datum; der Verlauf wird daraus über die
   Buchungen vor- und zurückgerechnet.
 
+- **Abo-Erkennung an echten Daten prüfen:** PayPal-Verwendungszweck
+  („Ihr Einkauf bei …“, „PP.….PP“), Kartenhändler hinter PayPal und die
+  Supermarkt-Schwelle sind nur synthetisch getestet (Audible/Ring aus dem
+  Echtdaten-Test).
+
 **Merkposten für spätere Phasen**
 
 - Phase 7 (Startseite): Anzahl unbestätigter Umbuchungen und nicht
-  passender Kartenabrechnungen als offene Punkte anzeigen.
+  passender Kartenabrechnungen als offene Punkte anzeigen; dazu aus
+  `GET /api/recurring` neue Vorschläge, fehlende/teurer gewordene Posten
+  und bald kündbare Verträge. Prognose nutzt nur übernommene, aktive Posten.
 - Phase 8 (Feinschliff): Der heutige Tag zählt in der Abdeckung als
   Lücke („03.10.2026 – 03.10.2026“) – heute und Zukunft nie als Lücke
   werten.

@@ -5,6 +5,7 @@ import { accountRoutes } from './routes/accounts.js';
 import { categoryRoutes } from './routes/categories.js';
 import { fundingRoutes } from './routes/funding.js';
 import { importRoutes } from './routes/imports.js';
+import { recurringRoutes } from './routes/recurring.js';
 import { ruleRoutes } from './routes/rules.js';
 import { transactionRoutes } from './routes/transactions.js';
 import { transferRoutes } from './routes/transfers.js';
@@ -43,6 +44,7 @@ export function buildApp(options: AppOptions): FastifyInstance {
   ruleRoutes(app, options.db);
   transferRoutes(app, options.db);
   fundingRoutes(app, options.db);
+  recurringRoutes(app, options.db);
 
   return app;
 }
