@@ -7,8 +7,9 @@ Dauerauftrag aufs Ausgabenkonto noch reicht.
 Alle Daten bleiben auf dem eigenen Rechner – keine Cloud, keine Telemetrie.
 Die vollständige Spezifikation steht in [`CLAUDE.md`](CLAUDE.md).
 
-> **Stand:** Projektgerüst (Phase 0). Die App zeigt bisher nur, ob Frontend
-> und Backend miteinander sprechen.
+> **Stand:** Phase 1 – Datenmodell, Migrationen und Kontenverwaltung
+> (anlegen, umbenennen, Rolle und Bank-Adapter wählen, deaktivieren).
+> Import folgt in Phase 2.
 
 ---
 
@@ -77,6 +78,20 @@ Startet Backend und Frontend zusammen in einem Fenster. Dann im Browser:
 Beenden mit `Strg + C` (Rückfrage mit `J` bestätigen).
 
 Ein Doppelklick-Startskript folgt in Phase 8.
+
+---
+
+## Datenbank
+
+Die SQLite-Datei liegt unter `data/haushaltsbuch.db` und wird beim ersten
+Start samt Ordner angelegt; ausstehende Migrationen laufen beim Start
+automatisch. Ein anderer Pfad lässt sich über die Umgebungsvariable
+`HAUSHALTSBUCH_DB` setzen (relativ zum Projektordner oder absolut), in
+PowerShell z. B.:
+
+```powershell
+$env:HAUSHALTSBUCH_DB = "data\test.db"; npm.cmd run dev
+```
 
 ---
 
