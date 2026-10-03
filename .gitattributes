@@ -1,0 +1,10 @@
+# Quelltext mit LF im Repository, Git übernimmt die Umwandlung.
+* text=auto eol=lf
+
+# Windows-Startskripte brauchen CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Fixtures exakt wie gespeichert: Encoding (ISO-8859-1, Windows-1252,
+# UTF-8 mit BOM) und Zeilenenden (CRLF) sind Teil des Tests.
+backend/test/fixtures/** -text -diff

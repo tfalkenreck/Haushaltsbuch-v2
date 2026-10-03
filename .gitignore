@@ -1,0 +1,43 @@
+# Abhängigkeiten & Build
+node_modules/
+dist/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Lokale Daten – niemals committen
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Kontoauszüge – niemals committen (Ausnahme: synthetische Fixtures)
+*.csv
+*.CSV
+*.sta
+*.STA
+!backend/test/fixtures/**/*.csv
+!backend/test/fixtures/**/*.CSV
+
+# Exporte aus der App
+*-export.json
+
+# Umgebung
+.env
+.env.*
+!.env.example
+
+# Logs & Systemdateien
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
