@@ -511,6 +511,7 @@ Status nach Abschluss einer Phase hier aktualisieren.
 | Konten | drei plus Kreditkarte (§ 5) |
 | Gemeinschaftskonto | nicht enthalten |
 | Banking-API | außerhalb des Umfangs, CSV-Import reicht |
+| Vitest-Advisory GHSA-82fw-gwwq-j7x9 | erledigt: Vitest 5.0.3 (Beginn Phase 1) |
 
 **Offene Punkte**
 
@@ -524,7 +525,4 @@ Status nach Abschluss einer Phase hier aktualisieren.
 - **Rolle „Depot / Altersvorsorge“** steht im Anforderungsdokument, ist
   aber kein aktuelles Konto. Erst ergänzen, wenn ein solches Konto
   hinzukommt.
-- **Vitest-Advisory GHSA-82fw-gwwq-j7x9 (moderate):** betrifft
-  `@vitest/mocker` bis Vitest 4.1.10, Fix erst in Vitest 5 (Major-Sprung).
-  Nur Testlauf, lokal, keine fremden Eingaben – bewusst akzeptiert.
-  Upgrade auf Vitest 5 zu Beginn von Phase 1, wenn Tests lokal laufen.
+
