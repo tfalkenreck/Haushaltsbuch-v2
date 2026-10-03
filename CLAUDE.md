@@ -155,6 +155,8 @@ Außerhalb des Umfangs: Gemeinschaftskonto und geteilte Kosten.
 
 ## 6. Import
 
+**Exakte Formate, Spalten-Mapping und Besonderheiten je Bank: `docs/bankformate.md` – vor jeder Arbeit an Adaptern lesen.**
+
 **Adapter-Interface pro Bank.** Benötigt: Volksbank OWL (Girokonto/Sparkonto),
 Comdirect, Volksbank-Visa (Format evtl. identisch mit dem Girokonto – prüfen,
 sobald eine echte Datei vorliegt; sonst eigener Adapter). CAMT.053 als
@@ -512,6 +514,7 @@ Status nach Abschluss einer Phase hier aktualisieren.
 | Gemeinschaftskonto | nicht enthalten |
 | Banking-API | außerhalb des Umfangs, CSV-Import reicht |
 | Vitest-Advisory GHSA-82fw-gwwq-j7x9 | erledigt: Vitest 5.0.3 (Beginn Phase 1) |
+| Visa-Format | identisch mit Volksbank-Girokonto (gleiche 18 Spalten); Unterschiede nur im Inhalt, siehe `docs/bankformate.md` |
 
 **Getroffen in Phase 1 (3. Oktober 2026)**
 
@@ -534,8 +537,8 @@ Status nach Abschluss einer Phase hier aktualisieren.
   Kartenzahlungen beim Bäcker) ergeben denselben `import_hash` – die zweite
   ginge verloren. Vorschlag für Phase 2: laufende Nummer identischer Zeilen
   innerhalb einer Datei mit in den Hash aufnehmen. Vor Umsetzung klären.
-- **Visa-Format:** identisch mit dem Volksbank-Girokonto oder eigener
-  Adapter? Klärt sich mit dem ersten echten Export.
+- **Encoding der Exporte** (Volksbank, Comdirect) und Comdirect-Metadaten-
+  bzw. „offen“-Zeilen noch ungeprüft – siehe `docs/bankformate.md` § 4.
 - **Rollup-Pin per `overrides` (`rollup@4.63.6`):** Rollup 4.64.0
   (Abhängigkeit von Vite, erschienen 2. Oktober 2026) hängt beim
   Tree-Shaking von `react-dom` in einer Endlosschleife, `vite build`
