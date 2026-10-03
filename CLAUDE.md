@@ -615,3 +615,30 @@ Status nach Abschluss einer Phase hier aktualisieren.
   aber kein aktuelles Konto. Erst ergänzen, wenn ein solches Konto
   hinzukommt.
 
+
+**Erkenntnisse aus dem ersten Echtdaten-Test (3. Oktober 2026)**
+
+- **Kartenabrechnung passt nicht zur Summe (10 von 10 Abrechnungen):**
+  Beispiel: Ausgleich 504,20 € mit Text „Abrechnung vom 18.09.2026“, die
+  Erkennung wählte Kartenumsätze 27.08.–28.09. (Kaufdatum) mit Summe
+  438,39 €. Wahrscheinliche Ursache: Der Abrechnungszeitraum der Bank
+  endet am **Abrechnungsdatum aus dem Text** und richtet sich nach dem
+  **Buchungstag der Bank** (`bank_booking_date`), nicht nach dem Kaufdatum.
+  Ein Kauf am 17.09., gebucht am 19.09., gehört zur nächsten Abrechnung.
+- **Mehrere Daueraufträge aufs Ausgabenkonto:** Am 11. gehen mehrere
+  Überweisungen vom Einnahmen- aufs Ausgabenkonto (z. B. 10 €, 60 €,
+  10 €, 100 €), dazu weitere an anderen Tagen. Die Deckungsprüfung (§ 12)
+  muss **alle** Umbuchungen aufs Ausgabenkonto pro Monat summieren und
+  die einzelnen Daueraufträge getrennt erkennen und anzeigen.
+- **Comdirect liefert keinen Saldo** (weder in Zeilen noch in
+  Metadaten). Für die Saldoentwicklung (§ 12.5) braucht es einen manuell
+  erfassten Kontostand mit Datum; der Verlauf wird daraus über die
+  Buchungen vor- und zurückgerechnet.
+
+**Merkposten für spätere Phasen**
+
+- Phase 7 (Startseite): Anzahl unbestätigter Umbuchungen und nicht
+  passender Kartenabrechnungen als offene Punkte anzeigen.
+- Phase 8 (Feinschliff): Der heutige Tag zählt in der Abdeckung als
+  Lücke („03.10.2026 – 03.10.2026“) – heute und Zukunft nie als Lücke
+  werten.
