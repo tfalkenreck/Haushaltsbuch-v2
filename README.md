@@ -16,11 +16,11 @@ Die vollständige Spezifikation steht in [`CLAUDE.md`](CLAUDE.md).
 
 | Was     | Version | Hinweis |
 |---------|---------|---------|
-| Node.js | **22 LTS** (≥ 22.12) | [nodejs.org](https://nodejs.org) → „LTS“, Windows-Installer (`.msi`, x64) |
+| Node.js | **24 LTS** (22 LTS geht auch) | [nodejs.org](https://nodejs.org) → „LTS“, Windows-Installer (`.msi`, x64) |
 | Git     | aktuell | [git-scm.com](https://git-scm.com) |
 
 Nicht nötig: Python, Visual Studio Build Tools, `node-gyp`. Die
-SQLite-Bibliothek (`better-sqlite3`) bringt für Node 22 fertige
+SQLite-Bibliothek (`better-sqlite3`) bringt für Node 22 und 24 fertige
 Windows-Binaries mit.
 
 Node-Version prüfen:
@@ -29,7 +29,7 @@ Node-Version prüfen:
 node -v
 ```
 
-Muss mit `v22.` beginnen. Eine andere Hauptversion bricht die Installation
+Muss mit `v24.` oder `v22.` beginnen. Eine andere Hauptversion bricht die Installation
 bewusst ab (`engine-strict`), statt still einen Compiler-Build zu versuchen.
 
 ---
@@ -102,7 +102,7 @@ Ausnahme eintragen und `npm.cmd rebuild esbuild` wiederholen.
 **`better-sqlite3`: Fehler mit `node-gyp`, „gyp ERR!“ oder „Python not
 found“**
 Bedeutet fast immer: falsche Node-Version, für die es keine fertige Binary
-gibt. Node 22 LTS installieren, dann:
+gibt. Node 24 LTS installieren, dann:
 
 ```powershell
 Remove-Item -Recurse -Force node_modules

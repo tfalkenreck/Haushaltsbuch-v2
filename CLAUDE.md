@@ -47,13 +47,13 @@ fließt, und daraus **konkrete Hinweise** ableitet – nicht nur Zahlen anzeigt.
 | Datenbank | SQLite über `better-sqlite3` (synchron)                     |
 | Frontend  | React + Vite                                                |
 | Tests     | Vitest (Root-Config mit Projekten `backend` und `frontend`) |
-| Laufzeit  | Node.js 22 LTS (`.nvmrc`, `engines`, `engine-strict`)       |
+| Laufzeit  | Node.js 24 LTS, 22 LTS unterstützt (`.nvmrc`, `engines`, `engine-strict`) |
 | Struktur  | npm-Workspaces: `backend/`, `frontend/`                     |
 
 **Windows ist Zielplattform.**
 
 - `better-sqlite3` ist auf eine Version gepinnt, für die vorgebaute
-  Binaries für Node 22 / Windows x64 existieren. Kein `node-gyp`-Build,
+  Binaries für Node 22 und 24 / Windows x64 existieren. Kein `node-gyp`-Build,
   kein Python, keine Visual-Studio-Build-Tools. Wer die Version oder die
   Node-Hauptversion ändert, prüft vorher, dass es Prebuilds gibt.
 - Alle Abhängigkeiten exakt gepinnt (`save-exact=true` in `.npmrc`),
