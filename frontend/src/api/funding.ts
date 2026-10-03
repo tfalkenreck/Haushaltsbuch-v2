@@ -36,6 +36,21 @@ export interface FundingMonth {
   balanceEndCents: number | null;
 }
 
+export interface FundingSwitch {
+  month: string;
+  fromCents: number;
+  toCents: number;
+}
+
+export interface FundingEvaluation {
+  startMonth: string | null;
+  source: 'manual' | 'switch' | 'all';
+  detectedSwitch: FundingSwitch | null;
+  manualStartMonth: string | null;
+  basisMonths: string[];
+  sufficient: boolean;
+}
+
 export interface FundingTrend {
   status: 'covered' | 'single' | 'trend' | 'unknown';
   deficitStreak: number;
@@ -51,8 +66,16 @@ export interface FundingTrend {
 export interface FundingRecommendation {
   basisMonths: number;
   averageExpensesCents: number;
+  minExpensesCents: number;
+  maxExpensesCents: number;
+  /** Aus der Schwankung der monatlichen Abbuchungssumme. */
   bufferCents: number;
   plannedMovesCents: number;
+  neededCents: number;
+  allMonthsCovered: boolean;
+  minSurplusCents: number | null;
+  balanceFalling: boolean | null;
+  verdict: 'fits' | 'increase';
   recommendedCents: number;
   currentCents: number;
   changeCents: number;
@@ -113,6 +136,7 @@ export interface FundingAnalysis {
   standingOrdersTotalCents: number;
   extraTransferCount: number;
   months: FundingMonth[];
+  evaluation: FundingEvaluation;
   trend: FundingTrend;
   recommendation: FundingRecommendation | null;
   causes: FundingCauses | null;
@@ -153,6 +177,10 @@ export interface BypassOverview {
 }
 
 export const fetchFunding = (accountId: number) => apiRequest<FundingAnalysis>('GET', `/accounts/${accountId}/funding`);
+
+/** Ersten Monat der Auswertung festlegen; `null` = automatisch ab der letzten Umstellung. */
+export const setFundingStart = (accountId: number, month: string | null) =>
+  apiRequest<FundingAnalysis>('PUT', `/accounts/${accountId}/funding/start`, { month });
 
 /** Kontostand am Ende eines Tages von Hand erfassen; `amount` als deutscher Betrag („1.234,56“). */
 export const createManualBalance = (accountId: number, input: { date: string; amount: string; notes: string | null }) =>

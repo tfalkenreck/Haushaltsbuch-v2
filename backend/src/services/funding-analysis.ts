@@ -16,6 +16,14 @@ import type { MonthStatus } from './coverage.js';
 
 /** So viele vollständige Monate gehen in Verlauf, Durchschnitt und Empfehlung ein. */
 export const FUNDING_WINDOW_MONTHS = 12;
+/**
+ * Umstellung der Daueraufträge: Ändert sich die Summe der laufenden
+ * Daueraufträge von einem Monat zum nächsten um mindestens 10 % und
+ * mindestens 10 €, beginnt die Auswertung neu – Monate davor beschreiben
+ * einen anderen Zustand (andere Daueraufträge, andere Abbuchungen).
+ */
+export const SWITCH_MIN_PERCENT = 10;
+export const SWITCH_MIN_CENTS = 1000;
 /** Mindestens so viele vollständige Monate braucht eine Empfehlung. */
 export const MIN_MONTHS_FOR_RECOMMENDATION = 3;
 /** Ab so vielen Unterdeckungen in Folge ist es ein Trend, kein Zufall (§ 12.4). */
@@ -76,7 +84,7 @@ export interface FundingTrend {
   deficitSince: string | null;
   /** Wird die Unterdeckung in der Folge größer? */
   direction: 'growing' | 'shrinking' | 'steady' | null;
-  /** Vollständige Monate im Betrachtungsfenster und davon mit Unterdeckung. */
+  /** Vollständige Monate im Betrachtungsfenster (ab Startmonat, höchstens zwölf) und davon mit Unterdeckung. */
   windowMonths: string[];
   deficitMonthsInWindow: number;
   averageStandingOrdersCents: number | null;
@@ -95,18 +103,64 @@ export interface FluctuatingItem {
 export interface FundingRecommendation {
   basisMonths: number;
   averageExpensesCents: number;
-  /** Puffer für schwankende Posten: 80.-Perzentil der Monatsabbuchungen minus Durchschnitt. */
+  /** Kleinste und größte monatliche Abbuchungssumme im Fenster. */
+  minExpensesCents: number;
+  maxExpensesCents: number;
+  /**
+   * Puffer aus der Schwankung der monatlichen Abbuchungssumme:
+   * 80.-Perzentil der Monatssummen minus Durchschnitt. Schwankungen
+   * einzelner Posten, die sich im Monat ausgleichen, kosten keinen Puffer.
+   */
   bufferCents: number;
   /** Posten, die laut § 13 aufs Konto umgestellt werden sollen, je Monat. */
   plannedMovesCents: number;
-  /** Auf volle 10 € aufgerundet. */
+  /** Bedarf: Durchschnitt + Puffer + Umzustellendes, auf volle 10 € aufgerundet. */
+  neededCents: number;
+  /** Jeder Monat im Fenster gedeckt. */
+  allMonthsCovered: boolean;
+  /** Kleinste Überdeckung im Fenster (nur wenn jeder Monat gedeckt ist). */
+  minSurplusCents: number | null;
+  /** Kontostand im Fenster gefallen; null = unbekannt. */
+  balanceFalling: boolean | null;
+  /**
+   * fits = passt, keine Änderung nötig; increase = Dauerauftrag erhöhen.
+   * Ist jeder Monat gedeckt und der Kontostand nicht fallend, passt der
+   * Dauerauftrag – nur umzustellende Posten, die die kleinste Überdeckung
+   * übersteigen, verlangen eine Erhöhung.
+   */
+  verdict: 'fits' | 'increase';
+  /** Neuer Gesamtbetrag (= aktuell, wenn es passt). */
   recommendedCents: number;
   /** Summe der laufenden Daueraufträge. */
   currentCents: number;
   /** Empfohlen minus aktuell; > 0 = Dauerauftrag erhöhen. */
   changeCents: number;
-  /** Die am stärksten schwankenden Posten – Begründung für den Puffer. */
+  /** Die am stärksten schwankenden Posten – zur Information, der Puffer rechnet mit der Monatssumme. */
   fluctuating: FluctuatingItem[];
+}
+
+/** Umstellung der Daueraufträge (deutliche Änderung ihrer Summe). */
+export interface FundingSwitch {
+  /** Erster Monat mit den neuen Daueraufträgen. */
+  month: string;
+  fromCents: number;
+  toCents: number;
+}
+
+/** Ab welchem Monat ausgewertet wird. */
+export interface FundingEvaluation {
+  /** null = alle Monate. */
+  startMonth: string | null;
+  /** manual = von Hand festgelegt, switch = Umstellung erkannt, all = keine Umstellung. */
+  source: 'manual' | 'switch' | 'all';
+  /** Erkannte letzte Umstellung, unabhängig von einer Festlegung von Hand. */
+  detectedSwitch: FundingSwitch | null;
+  /** Von Hand festgelegter Startmonat, falls vorhanden. */
+  manualStartMonth: string | null;
+  /** Vollständige Monate ab Startmonat (Fenster). */
+  basisMonths: string[];
+  /** Mindestens drei vollständige Monate – sonst sind Durchschnitt und Empfehlung nicht belastbar. */
+  sufficient: boolean;
 }
 
 export interface PriceChange {
@@ -207,19 +261,98 @@ export function fundingMonths(
   return [...rows.values()].sort((a, b) => a.month.localeCompare(b.month));
 }
 
-/** Die letzten bis zu `FUNDING_WINDOW_MONTHS` vollständigen Monate. */
-export function windowOf(rows: FundingMonth[]): FundingMonth[] {
-  return rows.filter((r) => r.status === 'complete').slice(-FUNDING_WINDOW_MONTHS);
+/** Daueraufträge, wie sie die Umstellungserkennung braucht (siehe standing-orders.ts). */
+export interface LevelOrder {
+  active: boolean;
+  occurrences: { month: string; amountCents: number }[];
+}
+
+/**
+ * Summe der laufenden Daueraufträge in einem Monat (Soll-Zufluss). Ein
+ * Dauerauftrag läuft vom Monat seiner ersten bis zu dem seiner letzten
+ * Ausführung, ein noch laufender unbegrenzt; eine ausgelassene Ausführung
+ * zählt mit dem letzten Betrag.
+ */
+export function standingOrderLevel(orders: LevelOrder[], month: string): number {
+  let sum = 0;
+  for (const o of orders) {
+    const first = o.occurrences[0];
+    const last = o.occurrences[o.occurrences.length - 1];
+    if (!first || !last || month < first.month || (!o.active && month > last.month)) continue;
+    let amount = first.amountCents;
+    for (const x of o.occurrences) if (x.month <= month) amount = x.amountCents;
+    sum += amount;
+  }
+  return sum;
+}
+
+/**
+ * Letzte Umstellung der Daueraufträge: der späteste Monat, in dem sich ihre
+ * Summe gegenüber dem Vormonat deutlich ändert (mindestens
+ * `SWITCH_MIN_PERCENT` % und `SWITCH_MIN_CENTS`). Verglichen werden
+ * vollständige Monate und am Ende der laufende, teilweise importierte
+ * Monat – teilweise Monate am Anfang oder um eine Importlücke würden
+ * Daueraufträge nur scheinbar beginnen oder enden lassen.
+ */
+export function detectFundingSwitch(rows: FundingMonth[], orders: LevelOrder[]): FundingSwitch | null {
+  const lastComplete = rows.map((r) => r.status).lastIndexOf('complete');
+  if (lastComplete === -1) return null;
+  const compared = rows.filter((r, i) => r.status === 'complete' || (i > lastComplete && r.status === 'partial'));
+  let result: FundingSwitch | null = null;
+  let prev: number | null = null;
+  for (const r of compared) {
+    const level = standingOrderLevel(orders, r.month);
+    if (prev !== null) {
+      const diff = Math.abs(level - prev);
+      if (diff >= SWITCH_MIN_CENTS && diff * 100 >= prev * SWITCH_MIN_PERCENT) {
+        result = { month: r.month, fromCents: prev, toCents: level };
+      }
+    }
+    prev = level;
+  }
+  return result;
+}
+
+/**
+ * Ab welchem Monat ausgewertet wird: von Hand festgelegt, sonst ab der
+ * letzten Umstellung der Daueraufträge, sonst alle Monate.
+ */
+export function fundingEvaluation(
+  rows: FundingMonth[],
+  detectedSwitch: FundingSwitch | null,
+  manualStartMonth: string | null,
+): FundingEvaluation {
+  const startMonth = manualStartMonth ?? detectedSwitch?.month ?? null;
+  const basisMonths = windowOf(rows, startMonth).map((r) => r.month);
+  return {
+    startMonth,
+    source: manualStartMonth !== null ? 'manual' : detectedSwitch ? 'switch' : 'all',
+    detectedSwitch,
+    manualStartMonth,
+    basisMonths,
+    sufficient: basisMonths.length >= MIN_MONTHS_FOR_RECOMMENDATION,
+  };
+}
+
+/** Vollständige Monate ab `startMonth` (null = alle). */
+function completeSince(rows: FundingMonth[], startMonth: string | null): FundingMonth[] {
+  return rows.filter((r) => r.status === 'complete' && (startMonth === null || r.month >= startMonth));
+}
+
+/** Die letzten bis zu `FUNDING_WINDOW_MONTHS` vollständigen Monate ab `startMonth`. */
+export function windowOf(rows: FundingMonth[], startMonth: string | null = null): FundingMonth[] {
+  return completeSince(rows, startMonth).slice(-FUNDING_WINDOW_MONTHS);
 }
 
 /**
  * Verlauf statt Momentaufnahme (§ 12.4): Unterdeckungen in Folge bis zum
  * letzten vollständigen Monat, ob sie wächst, Durchschnitte im Fenster.
- * Unvollständige Monate zählen nicht – ein halber Monat sähe sonst gedeckt aus.
+ * Unvollständige Monate zählen nicht – ein halber Monat sähe sonst gedeckt
+ * aus. Monate vor `startMonth` (vor der Umstellung) zählen ebenfalls nicht.
  */
-export function fundingTrend(rows: FundingMonth[]): FundingTrend {
-  const window = windowOf(rows);
-  const complete = rows.filter((r) => r.status === 'complete');
+export function fundingTrend(rows: FundingMonth[], startMonth: string | null = null): FundingTrend {
+  const window = windowOf(rows, startMonth);
+  const complete = completeSince(rows, startMonth);
   let streak = 0;
   for (let i = complete.length - 1; i >= 0 && (complete[i] as FundingMonth).differenceCents < 0; i--) streak++;
   const streakRows = complete.slice(complete.length - streak);
@@ -268,25 +401,45 @@ function itemMonthSums(transactions: FundingTransaction[], months: ReadonlySet<s
 }
 
 /**
- * Empfehlung für den Dauerauftrag (§ 12.6): durchschnittliche Abbuchungen
- * der letzten vollständigen Monate (Durchschnitt statt Median, damit
- * Jahresbeiträge mitfinanziert sind) plus Puffer für schwankende Posten
- * plus Posten, die laut § 13 aufs Konto umziehen sollen; aufgerundet auf
- * volle 10 €. `null` bei weniger als drei vollständigen Monaten.
+ * Empfehlung für den Dauerauftrag (§ 12.6) auf Grundlage der vollständigen
+ * Monate ab `startMonth` (seit der letzten Umstellung). `null` bei weniger
+ * als drei solchen Monaten.
+ *
+ * - Ist jeder Monat gedeckt und der Kontostand nicht fallend, passt der
+ *   Dauerauftrag. Nur umzustellende Posten (§ 13), die die kleinste
+ *   monatliche Überdeckung übersteigen, verlangen eine Erhöhung.
+ * - Sonst: Bedarf = durchschnittliche Abbuchungen (Durchschnitt statt
+ *   Median, damit Jahresbeiträge mitfinanziert sind) + Puffer aus der
+ *   Schwankung der Monatssummen + Umzustellendes, auf volle 10 €
+ *   aufgerundet. Liegt der Bedarf nicht über dem aktuellen Betrag, passt es.
  */
 export function fundingRecommendation(
   rows: FundingMonth[],
   transactions: FundingTransaction[],
   currentCents: number,
   plannedMovesCents: number,
+  startMonth: string | null = null,
+  balance: Pick<BalanceAssessment, 'changeCents'> | null = null,
 ): FundingRecommendation | null {
-  const window = windowOf(rows);
+  const window = windowOf(rows, startMonth);
   if (window.length < MIN_MONTHS_FOR_RECOMMENDATION) return null;
   const expenses = window.map((r) => r.expensesCents);
   const averageExpensesCents = average(expenses) as number;
   const bufferCents = Math.max(0, percentile(expenses, 80) - averageExpensesCents);
-  const raw = Math.max(0, averageExpensesCents + bufferCents + plannedMovesCents);
-  const recommendedCents = Math.ceil(raw / RECOMMENDATION_STEP_CENTS) * RECOMMENDATION_STEP_CENTS;
+  const roundUp = (cents: number) => Math.ceil(Math.max(0, cents) / RECOMMENDATION_STEP_CENTS) * RECOMMENDATION_STEP_CENTS;
+  const neededCents = roundUp(averageExpensesCents + bufferCents + plannedMovesCents);
+
+  const allMonthsCovered = window.every((r) => r.differenceCents >= 0);
+  const minSurplusCents = allMonthsCovered ? Math.min(...window.map((r) => r.differenceCents)) : null;
+  const balanceFalling = balance?.changeCents == null ? null : balance.changeCents < 0;
+
+  let recommendedCents: number;
+  if (allMonthsCovered && balanceFalling !== true) {
+    const missing = plannedMovesCents - (minSurplusCents as number);
+    recommendedCents = missing > 0 ? roundUp(currentCents + missing) : currentCents;
+  } else {
+    recommendedCents = Math.max(currentCents, neededCents);
+  }
 
   const months = window.map((r) => r.month);
   const fluctuating: FluctuatingItem[] = [];
@@ -303,8 +456,15 @@ export function fundingRecommendation(
   return {
     basisMonths: window.length,
     averageExpensesCents,
+    minExpensesCents: Math.min(...expenses),
+    maxExpensesCents: Math.max(...expenses),
     bufferCents,
     plannedMovesCents,
+    neededCents,
+    allMonthsCovered,
+    minSurplusCents,
+    balanceFalling,
+    verdict: recommendedCents > currentCents ? 'increase' : 'fits',
     recommendedCents,
     currentCents,
     changeCents: recommendedCents - currentCents,
@@ -336,10 +496,16 @@ export function lastPriceChange(debits: { date: string; amountCents: number }[])
 /**
  * Ursachen benennen (§ 12.7): welche Posten sind gestiegen und um wie
  * viel – Durchschnitt je Monat der letzten drei vollständigen Monate gegen
- * die bis zu sechs davor. `null`, solange es keinen Vergleichszeitraum gibt.
+ * die bis zu sechs davor, beides ab `startMonth` (Monate vor einer
+ * Umstellung beschreiben einen anderen Zustand). `null`, solange es keinen
+ * Vergleichszeitraum gibt.
  */
-export function fundingCauses(rows: FundingMonth[], transactions: FundingTransaction[]): FundingCauses | null {
-  const complete = rows.filter((r) => r.status === 'complete').map((r) => r.month);
+export function fundingCauses(
+  rows: FundingMonth[],
+  transactions: FundingTransaction[],
+  startMonth: string | null = null,
+): FundingCauses | null {
+  const complete = completeSince(rows, startMonth).map((r) => r.month);
   if (complete.length < CAUSE_RECENT_MONTHS + 1) return null;
   const recentMonths = complete.slice(-CAUSE_RECENT_MONTHS);
   const referenceMonths = complete.slice(-CAUSE_RECENT_MONTHS - CAUSE_REFERENCE_MONTHS, -CAUSE_RECENT_MONTHS);
@@ -391,8 +557,13 @@ export function fundingCauses(rows: FundingMonth[], transactions: FundingTransac
  * ist das Konto schon im Minus? Reicht das Guthaben bei gleichbleibender
  * Unterdeckung noch N Monate?
  */
-export function assessBalance(rows: FundingMonth[], trend: FundingTrend, current: BalanceInfo | null): BalanceAssessment {
-  const window = windowOf(rows);
+export function assessBalance(
+  rows: FundingMonth[],
+  trend: FundingTrend,
+  current: BalanceInfo | null,
+  startMonth: string | null = null,
+): BalanceAssessment {
+  const window = windowOf(rows, startMonth);
   const known = window.filter((r) => r.balanceEndCents !== null);
   const lowest = known.reduce<FundingMonth | null>(
     (low, r) => (low === null || (r.balanceEndCents as number) < (low.balanceEndCents as number) ? r : low),
@@ -408,7 +579,7 @@ export function assessBalance(rows: FundingMonth[], trend: FundingTrend, current
 
   let runwayMonths: number | null = null;
   if (current && current.balanceCents > 0 && trend.deficitStreak > 0) {
-    const streak = rows.filter((r) => r.status === 'complete').slice(-trend.deficitStreak);
+    const streak = completeSince(rows, startMonth).slice(-trend.deficitStreak);
     const deficit = -Math.round(streak.reduce((s, r) => s + r.differenceCents, 0) / streak.length);
     if (deficit > 0) runwayMonths = Math.floor(current.balanceCents / deficit);
   }

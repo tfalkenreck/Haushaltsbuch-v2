@@ -3,7 +3,7 @@ import type { Db } from '../db/connection.js';
 import { todayIso } from '../lib/time.js';
 import { deleteManualBalance, listManualBalances, setManualBalance, type ManualBalanceInput } from '../services/balances.js';
 import { listBypass, setBypassDecision, type BypassDecisionInput } from '../services/bypass.js';
-import { getFunding } from '../services/funding.js';
+import { getFunding, setFundingStart } from '../services/funding.js';
 
 const idParams = {
   type: 'object',
@@ -22,6 +22,13 @@ const balanceBody = {
   },
 } as const;
 
+const startBody = {
+  type: 'object',
+  required: ['month'],
+  additionalProperties: false,
+  properties: { month: { type: ['string', 'null'], pattern: '^\\d{4}-\\d{2}$' } },
+} as const;
+
 const decisionBody = {
   type: 'object',
   required: ['sourceAccountId', 'key', 'decision'],
@@ -38,6 +45,16 @@ export function fundingRoutes(app: FastifyInstance, db: Db): void {
   /** Deckungsprüfung eines per Dauerauftrag gespeisten Kontos (CLAUDE.md § 12). */
   app.get<{ Params: { id: number } }>('/api/accounts/:id/funding', { schema: { params: idParams } }, async (request) =>
     getFunding(db, request.params.id, todayIso()),
+  );
+
+  /** Ersten Monat der Auswertung festlegen (month null = automatisch ab der letzten Umstellung). */
+  app.put<{ Params: { id: number }; Body: { month: string | null } }>(
+    '/api/accounts/:id/funding/start',
+    { schema: { params: idParams, body: startBody } },
+    async (request) => {
+      setFundingStart(db, request.params.id, request.body.month);
+      return getFunding(db, request.params.id, todayIso());
+    },
   );
 
   /** Von Hand erfasste Kontostände (für Konten ohne Saldo im Export). */

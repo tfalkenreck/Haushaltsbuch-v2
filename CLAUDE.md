@@ -621,11 +621,27 @@ Status nach Abschluss einer Phase hier aktualisieren.
 | § 13 Entscheidung | `bypass_decisions` je Herkunftskonto und Vertrag: `move` (Ziel = Ausgabenkonto, automatisch bei genau einem) oder `keep`; zurücknehmbar. „Erhöhung“ = Summe der Monatsbeträge laufender `move`-Posten |
 | § 13 Kontowechsel | Bleibt die Abbuchung auf dem Einnahmenkonto über ihren Termin hinaus aus (Toleranz 5–31 Tage je Intervall) und erscheint dieselbe Gegenpartei danach auf einem Ausgabenkonto → „umgestellt“, zählt nicht mehr in die Erhöhung (sie steckt dann in den Abbuchungen). Ohne Gegenstück → „beendet“ |
 
+**Korrektur Phase 5 nach dem Echtdaten-Test (3. Oktober 2026)**
+
+Anlass: Im Mai wurden die Daueraufträge umgestellt (fünf beendet, Beträge geändert; 1.310,50 € → 425 €, Abbuchungen ca. 1.308 € → 388 €). Gemittelt über alle Monate empfahl die Seite +885 €, obwohl seit Mai jeder Monat gedeckt ist.
+
+| Frage | Entscheidung |
+|-------|--------------|
+| Umstellung erkennen | Summe der laufenden Daueraufträge je Monat (ein Dauerauftrag läuft von der ersten bis zur letzten Ausführung, ein laufender unbegrenzt, ausgelassene Ausführung mit letztem Betrag). Umstellung = Änderung zum Vormonat um mindestens **10 % und 10 €**; maßgeblich ist die **letzte**. Verglichen werden vollständige Monate und der laufende, teilweise importierte Monat am Ende – nicht teilweise Monate am Anfang oder um Importlücken |
+| Startmonat | Verlauf, Durchschnitte, Puffer, Empfehlung, „Was ist teurer geworden“ und Saldoveränderung nutzen nur vollständige Monate ab dem Startmonat (höchstens zwölf). Startmonat = von Hand festgelegt (`funding_settings`, Migration 006), sonst letzte Umstellung, sonst alle Monate. Unter 3 Monaten keine Empfehlung, die Seite sagt es offen; Ursachen brauchen 4. Die Monatsübersicht zeigt alle Monate, frühere als „vor der Umstellung“ |
+| Puffer | 80.-Perzentil (Nearest-Rank) der **monatlichen Abbuchungssummen** minus Durchschnitt – so war es schon gerechnet; die +885 € kamen aus dem gemischten Fenster. Posten, die sich im Monat ausgleichen, kosten keinen Puffer. Schwankende Einzelposten werden nur zur Information genannt |
+| „Passt“ | Ist jeder Monat seit dem Start gedeckt und der Kontostand nicht gefallen (unbekannt zählt nicht als fallend): Empfehlung „passt, keine Änderung nötig“. Umzustellende Posten (§ 13) erhöhen nur um den Teil, der die kleinste monatliche Überdeckung übersteigt. Sonst Bedarf = Ø + Puffer + Umzustellendes (volle 10 €); liegt er nicht über dem aktuellen Betrag, passt es ebenfalls. Eine Senkung wird nicht empfohlen |
+| Unvollständige Monate | In der Monatsübersicht neutral: Differenz ohne Unter-/Überdeckung, ohne Balken |
+
 **Offene Punkte**
 
 - **Deckungsprüfung an echten Daten prüfen:** Erkennung der Daueraufträge
-  (Toleranz 4 Tage, Betragsänderung vs. neuer Dauerauftrag am selben Tag)
-  und die Kandidaten für § 13 sind nur synthetisch getestet.
+  (Toleranz 4 Tage, Betragsänderung vs. neuer Dauerauftrag am selben Tag),
+  die Umstellungserkennung (Schwelle 10 % / 10 €) und die Kandidaten für
+  § 13 sind nur synthetisch getestet. Bei gleichzeitigen Betragsänderungen
+  mehrerer Daueraufträge am selben Tag ordnet die Erkennung nach dem
+  nächstliegenden Betrag zu – die Summe stimmt, die Zuordnung einzelner
+  Aufträge kann vertauscht sein.
 
 - **Umbuchungs-Erkennung an echten Daten prüfen:** Text der Visa-
   Sammelabbuchung auf dem Girokonto und des Ausgleichs auf dem

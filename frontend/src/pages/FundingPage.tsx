@@ -4,6 +4,7 @@ import {
   createManualBalance,
   deleteManualBalance,
   fetchFunding,
+  setFundingStart,
   type FundingAnalysis,
   type FundingMonth,
   type StandingOrder,
@@ -32,7 +33,9 @@ function lastDayOf(month: string): string {
   return `${month}-${String(day).padStart(2, '0')}`;
 }
 
-function Difference({ cents, inline = false }: { cents: number; inline?: boolean }) {
+function Difference({ cents, inline = false, neutral = false }: { cents: number; inline?: boolean; neutral?: boolean }) {
+  // Unvollständige Monate: Wert ohne Wertung – ein halber Monat ist weder gedeckt noch unterdeckt.
+  if (neutral) return <span className="muted">{formatCents(cents, { sign: true })}</span>;
   if (cents === 0) return <span>{formatCents(0)}</span>;
   const label = cents < 0 ? 'Unterdeckung' : 'Überdeckung';
   return (
@@ -43,21 +46,164 @@ function Difference({ cents, inline = false }: { cents: number; inline?: boolean
   );
 }
 
+const period = (months: string[]) =>
+  months.length === 1 ? formatMonth(months[0] as string) : `${formatMonth(months[0] as string)} – ${formatMonth(months[months.length - 1] as string)}`;
+
+/** Ab wann ausgewertet wird: letzte Umstellung der Daueraufträge oder von Hand, umschaltbar. */
+function Evaluation({ f, onChange }: { f: FundingAnalysis; onChange: (f: FundingAnalysis) => void }) {
+  const e = f.evaluation;
+  const [error, setError] = useState<string | null>(null);
+  const choices = f.months.filter((m) => m.status !== 'missing').map((m) => m.month);
+
+  async function choose(value: string) {
+    setError(null);
+    try {
+      onChange(await setFundingStart(f.accountId, value === '' ? null : value));
+    } catch (err) {
+      setError(message(err));
+    }
+  }
+
+  const n = e.basisMonths.length;
+  return (
+    <div className="panel">
+      <p>
+        {e.source === 'switch' && e.detectedSwitch && (
+          <>
+            <strong>Ausgewertet ab {formatMonth(e.detectedSwitch.month)}:</strong> Da wurden die Daueraufträge umgestellt (
+            {formatCents(e.detectedSwitch.fromCents)} → {formatCents(e.detectedSwitch.toCents)} je Monat). Monate davor
+            beschreiben einen anderen Stand und zählen nicht für Verlauf, Empfehlung und Ursachen.
+          </>
+        )}
+        {e.source === 'manual' && e.startMonth && (
+          <>
+            <strong>Ausgewertet ab {formatMonth(e.startMonth)}</strong> (von Hand festgelegt)
+            {e.detectedSwitch && e.detectedSwitch.month !== e.startMonth && (
+              <>
+                {' '}
+                – erkannt wäre die Umstellung im {formatMonth(e.detectedSwitch.month)} ({formatCents(e.detectedSwitch.fromCents)} →{' '}
+                {formatCents(e.detectedSwitch.toCents)})
+              </>
+            )}
+            .
+          </>
+        )}
+        {e.source === 'all' && <>Keine Umstellung der Daueraufträge erkannt – ausgewertet werden alle vollständigen Monate (höchstens zwölf).</>}
+      </p>
+      {n > 0 && !e.sufficient && (
+        <p className="warnings">
+          {e.startMonth ? `Seit ${formatMonth(e.startMonth)}` : 'Bisher'} gibt es erst {n} vollständig importierte{n === 1 ? 'n' : ''} Monat
+          {n === 1 ? '' : 'e'}. Für belastbare Durchschnitte und eine Empfehlung braucht es drei – die Aussagen unten sind vorläufig.
+        </p>
+      )}
+      {n === 0 && e.startMonth && (
+        <p className="warnings">
+          Seit {formatMonth(e.startMonth)} gibt es noch keinen vollständig importierten Monat – Deckung und Empfehlung lassen sich
+          noch nicht beurteilen.
+        </p>
+      )}
+      <label className="inline">
+        Auswertung ab{' '}
+        <select value={e.manualStartMonth ?? ''} onChange={(ev) => void choose(ev.target.value)}>
+          <option value="">
+            automatisch{e.detectedSwitch ? ` (letzte Umstellung, ${formatMonth(e.detectedSwitch.month)})` : ' (alle Monate)'}
+          </option>
+          {choices.map((m) => (
+            <option key={m} value={m}>
+              {formatMonth(m)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
+function Recommendation({ f }: { f: FundingAnalysis }) {
+  const r = f.recommendation;
+  const n = f.evaluation.basisMonths.length;
+  if (!r) {
+    return n > 0 ? (
+      <p className="hint">
+        Keine Empfehlung: Für einen belastbaren Durchschnitt braucht es mindestens drei vollständig importierte Monate
+        {f.evaluation.startMonth ? ` seit ${formatMonth(f.evaluation.startMonth)}` : ''} (bisher {n}).
+      </p>
+    ) : null;
+  }
+  const since = period(f.evaluation.basisMonths);
+  const plannedOnly = r.allMonthsCovered && r.balanceFalling !== true;
+  return (
+    <div className="recommendation">
+      {r.verdict === 'fits' ? (
+        <p>
+          <strong className="surplus">Empfehlung: passt, keine Änderung nötig</strong> – die Daueraufträge von{' '}
+          {formatCents(r.currentCents)} je Monat reichen.
+        </p>
+      ) : (
+        <p>
+          <strong>Empfehlung: Daueraufträge insgesamt {formatCents(r.recommendedCents)} je Monat</strong> (aktuell{' '}
+          {formatCents(r.currentCents)}, <span className="deficit">{formatCents(r.changeCents)} mehr</span>).
+        </p>
+      )}
+      {plannedOnly ? (
+        <p className="hint">
+          {since}: jeder Monat gedeckt, mindestens {formatCents(r.minSurplusCents ?? 0)} Überdeckung
+          {r.balanceFalling === false ? ', der Kontostand ist nicht gefallen' : ' (Kontostand unbekannt)'}.
+          {r.plannedMovesCents > 0 &&
+            (r.verdict === 'increase' ? (
+              <>
+                {' '}
+                Die umzustellenden Posten ({formatCents(r.plannedMovesCents)} je Monat) passen nicht mehr in die kleinste Überdeckung –
+                daher die Erhöhung, aufgerundet auf volle 10 €.
+              </>
+            ) : (
+              <> Die umzustellenden Posten ({formatCents(r.plannedMovesCents)} je Monat) passen noch in die kleinste Überdeckung.</>
+            ))}
+        </p>
+      ) : (
+        <p className="hint">
+          Bedarf {formatCents(r.neededCents)}: Ø Abbuchungen {since} {formatCents(r.averageExpensesCents)} + Puffer{' '}
+          {formatCents(r.bufferCents)}
+          {r.plannedMovesCents > 0 && <> + umzustellende Posten {formatCents(r.plannedMovesCents)}</>}, aufgerundet auf volle 10 €.
+          {r.balanceFalling && r.allMonthsCovered && <> Jeder Monat war gedeckt, der Kontostand ist aber gefallen.</>}
+        </p>
+      )}
+      <p className="hint">
+        Der Puffer kommt aus der Schwankung der monatlichen Abbuchungssumme ({formatCents(r.minExpensesCents)} bis{' '}
+        {formatCents(r.maxExpensesCents)}): er deckt einen Monat, der teurer ist als 4 von 5 Monaten. Posten, die sich innerhalb
+        eines Monats ausgleichen, kosten keinen Puffer.
+      </p>
+      {r.fluctuating.length > 0 && (
+        <p className="hint">
+          Stark schwankende Posten (zur Information):{' '}
+          {r.fluctuating
+            .map((i) => `${i.label} (${formatCents(i.minCents)} – ${formatCents(i.maxCents)}, Ø ${formatCents(i.averageCents)})`)
+            .join(' · ')}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Zusammenfassung: gedeckt? seit wann nicht? wächst es? was empfiehlt sich? */
 function Verdict({ f }: { f: FundingAnalysis }) {
   const t = f.trend;
-  const r = f.recommendation;
   const b = f.balance;
   const months = t.windowMonths.length;
   const directionText =
     t.direction === 'growing' ? 'und sie wird größer' : t.direction === 'shrinking' ? 'sie wird aber kleiner' : t.direction === 'steady' ? 'gleichbleibend' : '';
+  const fits = f.recommendation?.verdict === 'fits';
 
   return (
-    <div className={`panel verdict ${t.status === 'trend' ? 'verdict-bad' : t.status === 'single' ? 'verdict-warn' : 'verdict-ok'}`}>
-      {t.status === 'unknown' && <p>Noch kein vollständig importierter Monat – ohne vollständige Monate lässt sich die Deckung nicht beurteilen.</p>}
+    <div className={`panel verdict ${t.status === 'trend' ? 'verdict-bad' : t.status === 'single' && !fits ? 'verdict-warn' : 'verdict-ok'}`}>
+      {t.status === 'unknown' && <p>Noch kein vollständig importierter Monat im Auswertungszeitraum – ohne vollständige Monate lässt sich die Deckung nicht beurteilen.</p>}
       {t.status === 'covered' && (
         <p>
-          <strong>Gedeckt:</strong> Im letzten vollständigen Monat haben die Daueraufträge die Abbuchungen gedeckt.
+          <strong>Gedeckt:</strong>{' '}
+          {t.deficitMonthsInWindow === 0
+            ? `${months === 1 ? 'Im' : 'In jedem der'} ${months === 1 ? '' : `${months} `}ausgewerteten Monat${months === 1 ? '' : 'e'} haben die Daueraufträge die Abbuchungen gedeckt.`
+            : 'Im letzten vollständigen Monat haben die Daueraufträge die Abbuchungen gedeckt.'}
         </p>
       )}
       {t.status === 'single' && (
@@ -77,9 +223,8 @@ function Verdict({ f }: { f: FundingAnalysis }) {
       )}
       {months > 0 && (
         <p>
-          Letzte {months} vollständige Monat{months === 1 ? '' : 'e'}: Daueraufträge Ø {formatCents(t.averageStandingOrdersCents ?? 0)},
-          Abbuchungen Ø {formatCents(t.averageExpensesCents ?? 0)}, Differenz Ø{' '}
-          <Difference cents={t.averageDifferenceCents ?? 0} inline />
+          {period(t.windowMonths)}: Daueraufträge Ø {formatCents(t.averageStandingOrdersCents ?? 0)}, Abbuchungen Ø{' '}
+          {formatCents(t.averageExpensesCents ?? 0)}, Differenz Ø <Difference cents={t.averageDifferenceCents ?? 0} inline />
           {t.deficitMonthsInWindow > 0 && <> · {t.deficitMonthsInWindow} davon mit Unterdeckung</>}
         </p>
       )}
@@ -106,7 +251,8 @@ function Verdict({ f }: { f: FundingAnalysis }) {
           {b.changeCents !== null && b.changeSince && (
             <>
               {' '}
-              Veränderung seit Ende {formatMonth(b.changeSince)}: {formatCents(b.changeCents, { sign: true })}.
+              Veränderung seit Ende {formatMonth(b.changeSince)}:{' '}
+              <span className={b.changeCents < 0 ? 'deficit' : 'surplus'}>{formatCents(b.changeCents, { sign: true })}</span>.
             </>
           )}
         </p>
@@ -115,38 +261,7 @@ function Verdict({ f }: { f: FundingAnalysis }) {
         <p className="muted">Kein Kontostand bekannt – unten einen Kontostand mit Datum erfassen, dann wird der Verlauf berechnet.</p>
       )}
 
-      {r ? (
-        <div className="recommendation">
-          <p>
-            <strong>Empfehlung: Daueraufträge insgesamt {formatCents(r.recommendedCents)} je Monat</strong> (aktuell{' '}
-            {formatCents(r.currentCents)},{' '}
-            {r.changeCents > 0 ? (
-              <span className="deficit">{formatCents(r.changeCents)} mehr</span>
-            ) : r.changeCents < 0 ? (
-              <span className="surplus">{formatCents(-r.changeCents)} weniger würden reichen</span>
-            ) : (
-              'passt'
-            )}
-            ).
-          </p>
-          <p className="hint">
-            Ø Abbuchungen der letzten {r.basisMonths} vollständigen Monate {formatCents(r.averageExpensesCents)} + Puffer für
-            schwankende Posten {formatCents(r.bufferCents)}
-            {r.plannedMovesCents > 0 && <> + umzustellende Posten {formatCents(r.plannedMovesCents)}</>}, aufgerundet auf volle
-            10 €. Der Puffer deckt einen Monat, der teurer ist als 4 von 5 Monaten.
-          </p>
-          {r.fluctuating.length > 0 && (
-            <p className="hint">
-              Stark schwankend:{' '}
-              {r.fluctuating
-                .map((i) => `${i.label} (${formatCents(i.minCents)} – ${formatCents(i.maxCents)}, Ø ${formatCents(i.averageCents)})`)
-                .join(' · ')}
-            </p>
-          )}
-        </div>
-      ) : (
-        months > 0 && <p className="hint">Für eine Empfehlung braucht es mindestens drei vollständig importierte Monate.</p>
-      )}
+      <Recommendation f={f} />
     </div>
   );
 }
@@ -219,7 +334,7 @@ function StandingOrders({ f }: { f: FundingAnalysis }) {
 }
 
 function Months({ f }: { f: FundingAnalysis }) {
-  const max = Math.max(1, ...f.months.map((m) => Math.abs(m.differenceCents)));
+  const max = Math.max(1, ...f.months.filter((m) => m.status === 'complete').map((m) => Math.abs(m.differenceCents)));
   return (
     <table className="data">
       <thead>
@@ -237,8 +352,9 @@ function Months({ f }: { f: FundingAnalysis }) {
         {[...f.months].reverse().map((m) => {
           const hint = STATUS_HINTS[m.status];
           const range = { first: `${m.month}-01`, last: lastDayOf(m.month) };
+          const beforeStart = f.evaluation.startMonth !== null && m.month < f.evaluation.startMonth;
           return (
-            <tr key={m.month} className={hint ? 'incomplete' : undefined}>
+            <tr key={m.month} className={hint ? 'incomplete' : beforeStart ? 'inactive' : undefined}>
               <td>
                 {formatMonth(m.month)}
                 {hint && (
@@ -246,6 +362,7 @@ function Months({ f }: { f: FundingAnalysis }) {
                     <small>{hint} – Werte unvollständig</small>
                   </a>
                 )}
+                {beforeStart && !hint && <small className="muted block">vor der Umstellung – zählt nicht</small>}
               </td>
               <td className="num">{formatCents(m.standingOrdersCents)}</td>
               <td className="num">{m.otherTransfersCents === 0 ? <span className="muted">–</span> : formatCents(m.otherTransfersCents, { sign: true })}</td>
@@ -256,13 +373,15 @@ function Months({ f }: { f: FundingAnalysis }) {
                 {m.creditsCents > 0 && <small className="muted block">davon {formatCents(m.creditsCents)} Erstattungen</small>}
               </td>
               <td className="num">
-                <Difference cents={m.differenceCents} />
+                <Difference cents={m.differenceCents} neutral={hint !== null} />
               </td>
               <td className="bar-cell">
-                <span
-                  className={`bar ${m.differenceCents < 0 ? 'bar-deficit' : 'bar-surplus'}`}
-                  style={{ width: `${(Math.abs(m.differenceCents) / max) * 100}%` }}
-                />
+                {hint === null && (
+                  <span
+                    className={`bar ${m.differenceCents < 0 ? 'bar-deficit' : 'bar-surplus'}`}
+                    style={{ width: `${(Math.abs(m.differenceCents) / max) * 100}%` }}
+                  />
+                )}
               </td>
               <td className="num">
                 {m.balanceEndCents === null ? (
@@ -281,9 +400,15 @@ function Months({ f }: { f: FundingAnalysis }) {
 
 function Causes({ f }: { f: FundingAnalysis }) {
   const c = f.causes;
-  if (!c) return <p className="hint">Für einen Vergleich braucht es mindestens vier vollständig importierte Monate.</p>;
-  const period = (months: string[]) =>
-    months.length === 1 ? formatMonth(months[0] as string) : `${formatMonth(months[0] as string)} – ${formatMonth(months[months.length - 1] as string)}`;
+  if (!c) {
+    const since = f.evaluation.startMonth ? ` seit ${formatMonth(f.evaluation.startMonth)}` : '';
+    return (
+      <p className="hint">
+        Für einen Vergleich braucht es mindestens vier vollständig importierte Monate{since} (bisher {f.evaluation.basisMonths.length}).
+        Monate vor einer Umstellung werden nicht verglichen – sie beschreiben einen anderen Stand.
+      </p>
+    );
+  }
   return (
     <>
       <p className="hint">
@@ -452,7 +577,8 @@ export function FundingPage({ params }: Props) {
       <p className="hint">
         Reicht der monatliche Dauerauftrag noch für das, was tatsächlich vom Konto abgebucht wird? Zufluss sind die
         erkannten Daueraufträge (Umbuchungen aufs Konto), Abfluss alle Abbuchungen ohne Umbuchungen abzüglich
-        Erstattungen. Nur vollständig importierte Monate zählen für Verlauf und Empfehlung.
+        Erstattungen. Für Verlauf, Empfehlung und Ursachen zählen nur vollständig importierte Monate seit der letzten
+        Umstellung der Daueraufträge.
       </p>
 
       {candidates.length === 0 && !requested ? (
@@ -490,6 +616,7 @@ export function FundingPage({ params }: Props) {
             {funding.accountName}
             {funding.dataEnd && <small className="muted"> · importiert bis {formatDate(funding.dataEnd)}</small>}
           </h3>
+          <Evaluation f={funding} onChange={setFunding} />
           <Verdict f={funding} />
 
           <h3>Daueraufträge</h3>
