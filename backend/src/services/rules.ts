@@ -359,7 +359,11 @@ export interface RuleSuggestion {
   outranks: { id: number; pattern: string; categoryPath: string; priority: number }[];
   /** Weitere unkategorisierte Buchungen, die die Regel beim Anwenden bekäme. */
   uncategorizedMatches: number;
-  /** Buchungen, die eine andere Regel anders kategorisiert hat – sie bleiben unverändert. */
+  /**
+   * Buchungen, die eine andere Regel anders kategorisiert hat und bei denen
+   * die neue Regel gewinnen würde. Sie bleiben unverändert, außer der
+   * Mensch stellt sie ausdrücklich um („auch diese umstellen“).
+   */
   otherRuleMatches: number;
 }
 
@@ -402,15 +406,11 @@ export function suggestRule(db: Db, transactionId: number, categoryId: number): 
   };
   const ranked = rankRules([...others, candidate]);
   let uncategorizedMatches = 0;
-  let otherRuleMatches = 0;
   for (const t of allTargets(db)) {
     if (t.id === tx.id || !ruleMatches(candidate, t)) continue;
-    if (t.category_id === null && t.category_source === null) {
-      if (pickRule(ranked, t) === candidate) uncategorizedMatches += 1;
-    } else if (t.category_source === 'rule' && t.category_id !== categoryId) {
-      otherRuleMatches += 1;
-    }
+    if (t.category_id === null && t.category_source === null && pickRule(ranked, t) === candidate) uncategorizedMatches += 1;
   }
+  const otherRuleMatches = reassignCandidateIds(db, others, candidate).length;
 
   return {
     field,
@@ -426,4 +426,147 @@ export function suggestRule(db: Db, transactionId: number, categoryId: number): 
     uncategorizedMatches,
     otherRuleMatches,
   };
+}
+
+// ---------------------------------------------------------------------------
+// „Auch diese umstellen“: per Regel anders einsortierte Buchungen
+// ---------------------------------------------------------------------------
+
+/**
+ * Buchungen, deren Kategorie eine Regel gesetzt hat, die aber nach der
+ * Reihenfolge `others + candidate` jetzt `candidate` zufiele und dadurch
+ * eine andere Kategorie bekämen. Von Hand gesetzte Kategorien sind nie
+ * dabei.
+ */
+function reassignCandidateIds(db: Db, others: EngineRule[], candidate: EngineRule): number[] {
+  const ranked = rankRules([...others, candidate]);
+  const rows = db
+    .prepare(
+      `SELECT id, counterparty, purpose, category_id FROM transactions
+        WHERE category_source = 'rule' AND category_id IS NOT NULL AND category_id <> ?`,
+    )
+    .all(candidate.categoryId) as ({ id: number; category_id: number } & MatchTarget)[];
+  return rows.filter((t) => ruleMatches(candidate, t) && pickRule(ranked, t) === candidate).map((t) => t.id);
+}
+
+export interface ReassignCandidate {
+  id: number;
+  accountName: string;
+  bookingDate: string;
+  amountCents: number;
+  counterparty: string;
+  purpose: string;
+  /** Jetzige Kategorie und die Regel, die sie gesetzt hat. */
+  categoryPath: string;
+  rulePattern: string | null;
+}
+
+export interface ReassignPreviewInput {
+  field: string;
+  patternType: string;
+  pattern: string;
+  categoryId: number;
+  priority: number;
+  /** Bestehende Regel, die geändert würde (sonst eine neue). */
+  ruleId?: number | null;
+}
+
+function describeCandidates(db: Db, ids: number[]): ReassignCandidate[] {
+  if (ids.length === 0) return [];
+  const rows = db
+    .prepare(
+      `SELECT t.id, a.name AS account_name, t.booking_date, t.amount_cents, t.counterparty, t.purpose,
+              CASE WHEN p.id IS NULL THEN c.name ELSE p.name || ' › ' || c.name END AS category_path,
+              r.pattern AS rule_pattern
+         FROM transactions t
+         JOIN accounts a ON a.id = t.account_id
+         JOIN categories c ON c.id = t.category_id
+         LEFT JOIN categories p ON p.id = c.parent_id
+         LEFT JOIN rules r ON r.id = t.category_rule_id
+        WHERE t.id IN (SELECT value FROM json_each(?))
+        ORDER BY t.booking_date DESC, t.id DESC`,
+    )
+    .all(JSON.stringify(ids)) as {
+    id: number;
+    account_name: string;
+    booking_date: string;
+    amount_cents: number;
+    counterparty: string;
+    purpose: string;
+    category_path: string;
+    rule_pattern: string | null;
+  }[];
+  return rows.map((r) => ({
+    id: r.id,
+    accountName: r.account_name,
+    bookingDate: r.booking_date,
+    amountCents: r.amount_cents,
+    counterparty: r.counterparty,
+    purpose: r.purpose,
+    categoryPath: r.category_path,
+    rulePattern: r.rule_pattern,
+  }));
+}
+
+/**
+ * Vorschau für „auch diese umstellen“, bevor die Regel gespeichert ist:
+ * welche per Regel einsortierten Buchungen die geplante Regel bekäme.
+ */
+export function previewReassign(db: Db, input: ReassignPreviewInput): ReassignCandidate[] {
+  const field = validateField(input.field);
+  const patternType = validatePatternType(input.patternType);
+  const pattern = validatePattern(patternType, input.pattern);
+  const priority = validatePriority(input.priority, 0);
+  getCategory(db, input.categoryId);
+  const ruleId = input.ruleId ?? null;
+  const others = loadEngineRules(db).filter((r) => r.id !== ruleId);
+  const candidate: EngineRule = {
+    id: ruleId ?? Number.MAX_SAFE_INTEGER,
+    field,
+    pattern,
+    categoryId: input.categoryId,
+    priority,
+    matches: compilePattern(patternType, pattern),
+  };
+  return describeCandidates(db, reassignCandidateIds(db, others, candidate));
+}
+
+/** Dasselbe für eine gespeicherte Regel. */
+export function reassignCandidates(db: Db, ruleId: number): ReassignCandidate[] {
+  const rules = loadEngineRules(db);
+  const rule = rules.find((r) => r.id === ruleId);
+  if (!rule) {
+    getRule(db, ruleId);
+    return []; // inaktive Regel oder deaktivierte Kategorie: greift nicht
+  }
+  return describeCandidates(
+    db,
+    reassignCandidateIds(
+      db,
+      rules.filter((r) => r.id !== ruleId),
+      rule,
+    ),
+  );
+}
+
+/**
+ * Stellt ausdrücklich ausgewählte Buchungen auf die Kategorie der Regel um.
+ * Umgestellt wird nur, was bei erneuter Prüfung noch passt: Kategorie von
+ * einer Regel gesetzt (nie von Hand), andere Kategorie, und die Regel
+ * gewinnt. Liefert die Zahl umgestellter Buchungen.
+ */
+export function reassignToRule(db: Db, ruleId: number, transactionIds: number[]): number {
+  const eligible = new Set(reassignCandidates(db, ruleId).map((c) => c.id));
+  const rule = getRule(db, ruleId);
+  const update = db.prepare(
+    `UPDATE transactions SET category_id = ?, category_rule_id = ?
+      WHERE id = ? AND category_source = 'rule'`,
+  );
+  return db.transaction(() => {
+    let changed = 0;
+    for (const id of new Set(transactionIds)) {
+      if (eligible.has(id)) changed += update.run(rule.categoryId, rule.id, id).changes;
+    }
+    return changed;
+  })();
 }

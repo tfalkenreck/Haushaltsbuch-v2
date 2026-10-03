@@ -3,6 +3,7 @@ import { AppError } from '../lib/errors.js';
 import { normalizeCounterparty } from '../lib/normalize.js';
 import { assertAssignableCategory } from './categories.js';
 import { applyRules, suggestRule, type RuleSuggestion } from './rules.js';
+import type { TransferKind, TransferStatus } from './transfers.js';
 
 export interface TransactionFilter {
   accountId?: number | undefined;
@@ -15,8 +16,10 @@ export interface TransactionFilter {
   q?: string | undefined;
   /** Kategorie inklusive ihrer Unterkategorien. */
   categoryId?: number | undefined;
-  /** Nur Buchungen ohne Kategorie. */
+  /** Nur Buchungen ohne Kategorie (Umbuchungen ausgenommen – sie brauchen keine). */
   uncategorized?: boolean | undefined;
+  /** only = nur Umbuchungen, exclude = ohne Umbuchungen. */
+  transfers?: 'only' | 'exclude' | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
 }
@@ -43,14 +46,26 @@ export interface TransactionItem {
   /** manual = von Hand (auch „bewusst keine“), rule = durch Regel, null = unberührt. */
   categorySource: 'manual' | 'rule' | 'auto' | null;
   categoryRuleId: number | null;
+  /** Umbuchung zwischen eigenen Konten – zählt weder als Einnahme noch als Ausgabe. */
+  transferId: number | null;
+  transferKind: TransferKind | null;
+  transferStatus: TransferStatus | null;
+  /** manual = von Hand (auch „bewusst keine Umbuchung“), auto = erkannt, null = unberührt. */
+  transferSource: 'manual' | 'auto' | null;
+  /** Das andere beteiligte Konto, falls bekannt. */
+  transferAccountName: string | null;
 }
 
 export interface TransactionPage {
   items: TransactionItem[];
   total: number;
-  /** Summen über alle Treffer des Filters (nicht nur die Seite). */
+  /** Summen über alle Treffer des Filters (nicht nur die Seite), ohne Umbuchungen. */
   inflowCents: number;
   outflowCents: number;
+  /** Umbuchungen unter den Treffern – zählen nicht als Einnahme oder Ausgabe. */
+  transferCount: number;
+  transferInflowCents: number;
+  transferOutflowCents: number;
   limit: number;
   offset: number;
 }
@@ -75,15 +90,23 @@ interface Row {
   category_path: string | null;
   category_source: 'manual' | 'rule' | 'auto' | null;
   category_rule_id: number | null;
+  transfer_id: number | null;
+  transfer_kind: TransferKind | null;
+  transfer_status: TransferStatus | null;
+  transfer_source: 'manual' | 'auto' | null;
+  transfer_account_name: string | null;
 }
 
 const ITEM_SELECT = `
   SELECT t.*, a.name AS account_name,
-         CASE WHEN p.id IS NULL THEN c.name ELSE p.name || ' › ' || c.name END AS category_path
+         CASE WHEN p.id IS NULL THEN c.name ELSE p.name || ' › ' || c.name END AS category_path,
+         tr.kind AS transfer_kind, tr.status AS transfer_status, oa.name AS transfer_account_name
     FROM transactions t
     JOIN accounts a ON a.id = t.account_id
     LEFT JOIN categories c ON c.id = t.category_id
-    LEFT JOIN categories p ON p.id = c.parent_id`;
+    LEFT JOIN categories p ON p.id = c.parent_id
+    LEFT JOIN transfers tr ON tr.id = t.transfer_id
+    LEFT JOIN accounts oa ON oa.id = CASE WHEN tr.from_account_id = t.account_id THEN tr.to_account_id ELSE tr.from_account_id END`;
 
 function toItem(r: Row): TransactionItem {
   return {
@@ -106,6 +129,11 @@ function toItem(r: Row): TransactionItem {
     categoryPath: r.category_path,
     categorySource: r.category_source,
     categoryRuleId: r.category_rule_id,
+    transferId: r.transfer_id,
+    transferKind: r.transfer_kind,
+    transferStatus: r.transfer_status,
+    transferSource: r.transfer_source,
+    transferAccountName: r.transfer_account_name,
   };
 }
 
@@ -150,7 +178,9 @@ export function listTransactions(db: Db, filter: TransactionFilter): Transaction
     where.push('t.category_id IN (SELECT id FROM categories WHERE id = ? OR parent_id = ?)');
     params.push(filter.categoryId, filter.categoryId);
   }
-  if (filter.uncategorized) where.push('t.category_id IS NULL');
+  if (filter.uncategorized) where.push('t.category_id IS NULL AND t.transfer_id IS NULL');
+  if (filter.transfers === 'only') where.push('t.transfer_id IS NOT NULL');
+  if (filter.transfers === 'exclude') where.push('t.transfer_id IS NULL');
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
   const limit = Math.min(Math.max(filter.limit ?? 100, 1), 500);
   const offset = Math.max(filter.offset ?? 0, 0);
@@ -158,11 +188,14 @@ export function listTransactions(db: Db, filter: TransactionFilter): Transaction
   const totals = db
     .prepare(
       `SELECT count(*) AS total,
-              coalesce(sum(CASE WHEN amount_cents > 0 THEN amount_cents END), 0) AS inflow,
-              coalesce(sum(CASE WHEN amount_cents < 0 THEN amount_cents END), 0) AS outflow
+              coalesce(sum(CASE WHEN transfer_id IS NULL AND amount_cents > 0 THEN amount_cents END), 0) AS inflow,
+              coalesce(sum(CASE WHEN transfer_id IS NULL AND amount_cents < 0 THEN amount_cents END), 0) AS outflow,
+              count(transfer_id) AS transfers,
+              coalesce(sum(CASE WHEN transfer_id IS NOT NULL AND amount_cents > 0 THEN amount_cents END), 0) AS transfer_in,
+              coalesce(sum(CASE WHEN transfer_id IS NOT NULL AND amount_cents < 0 THEN amount_cents END), 0) AS transfer_out
          FROM transactions t ${whereSql}`,
     )
-    .get(...params) as { total: number; inflow: number; outflow: number };
+    .get(...params) as { total: number; inflow: number; outflow: number; transfers: number; transfer_in: number; transfer_out: number };
 
   const rows = db
     .prepare(
@@ -178,6 +211,9 @@ export function listTransactions(db: Db, filter: TransactionFilter): Transaction
     total: totals.total,
     inflowCents: totals.inflow,
     outflowCents: totals.outflow,
+    transferCount: totals.transfers,
+    transferInflowCents: totals.transfer_in,
+    transferOutflowCents: totals.transfer_out,
     limit,
     offset,
   };
@@ -251,14 +287,17 @@ export interface UncategorizedSummary {
   outflowCents: number;
 }
 
-/** Anzahl und Summen aller Buchungen ohne Kategorie (CLAUDE.md § 2.5, § 15). */
+/**
+ * Anzahl und Summen aller Buchungen ohne Kategorie (CLAUDE.md § 2.5, § 15).
+ * Umbuchungen zählen nicht mit – sie sind weder Einnahme noch Ausgabe (§ 10).
+ */
 export function uncategorizedSummary(db: Db): UncategorizedSummary {
   const row = db
     .prepare(
       `SELECT count(*) AS count,
               coalesce(sum(CASE WHEN amount_cents > 0 THEN amount_cents END), 0) AS inflow,
               coalesce(sum(CASE WHEN amount_cents < 0 THEN amount_cents END), 0) AS outflow
-         FROM transactions WHERE category_id IS NULL`,
+         FROM transactions WHERE category_id IS NULL AND transfer_id IS NULL`,
     )
     .get() as { count: number; inflow: number; outflow: number };
   return { count: row.count, inflowCents: row.inflow, outflowCents: row.outflow };

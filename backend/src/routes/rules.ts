@@ -8,7 +8,11 @@ import {
   getRule,
   listRules,
   previewPattern,
+  previewReassign,
+  reassignCandidates,
+  reassignToRule,
   updateRule,
+  type ReassignPreviewInput,
   type RuleInput,
   type RulePatch,
 } from '../services/rules.js';
@@ -53,6 +57,29 @@ const previewBody = {
   },
 } as const;
 
+const reassignPreviewBody = {
+  type: 'object',
+  required: ['field', 'patternType', 'pattern', 'categoryId', 'priority'],
+  additionalProperties: false,
+  properties: {
+    field: ruleProperties.field,
+    patternType: ruleProperties.patternType,
+    pattern: ruleProperties.pattern,
+    categoryId: ruleProperties.categoryId,
+    priority: ruleProperties.priority,
+    ruleId: { type: ['integer', 'null'], minimum: 1 },
+  },
+} as const;
+
+const reassignBody = {
+  type: 'object',
+  required: ['transactionIds'],
+  additionalProperties: false,
+  properties: {
+    transactionIds: { type: 'array', maxItems: 10000, items: { type: 'integer', minimum: 1 } },
+  },
+} as const;
+
 export function ruleRoutes(app: FastifyInstance, db: Db): void {
   app.get('/api/rules', async () => listRules(db));
 
@@ -92,4 +119,26 @@ export function ruleRoutes(app: FastifyInstance, db: Db): void {
     getRule(db, request.params.id);
     return { categorized: applyRules(db, { ruleId: request.params.id }) };
   });
+
+  /**
+   * „Auch diese umstellen“ – Vorschau vor dem Speichern der Regel: per Regel
+   * anders einsortierte Buchungen, die die geplante Regel bekäme.
+   */
+  app.post<{ Body: ReassignPreviewInput }>(
+    '/api/rules/reassign-preview',
+    { schema: { body: reassignPreviewBody } },
+    async (request) => previewReassign(db, request.body),
+  );
+
+  /** Dieselbe Liste für eine gespeicherte Regel. */
+  app.get<{ Params: { id: number } }>('/api/rules/:id/reassign', { schema: { params: idParams } }, async (request) =>
+    reassignCandidates(db, request.params.id),
+  );
+
+  /** Ausdrücklich ausgewählte, per Regel einsortierte Buchungen umstellen – nie von Hand gesetzte. */
+  app.post<{ Params: { id: number }; Body: { transactionIds: number[] } }>(
+    '/api/rules/:id/reassign',
+    { schema: { params: idParams, body: reassignBody } },
+    async (request) => ({ reassigned: reassignToRule(db, request.params.id, request.body.transactionIds) }),
+  );
 }

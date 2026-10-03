@@ -10,6 +10,7 @@ import { nowIso } from '../lib/time.js';
 import { getAccount, type Account } from './accounts.js';
 import { coveredPeriods, gapsBetween, mergePeriods, type Period } from './coverage.js';
 import { applyRules } from './rules.js';
+import { detectTransfers, repairTransfersAfterDelete } from './transfers.js';
 
 export interface ImportInput {
   accountId: number;
@@ -36,6 +37,13 @@ export interface ImportResult {
   /** Davon durch Regeln kategorisiert. */
   categorized: number;
   duplicates: number;
+  /**
+   * Bereits vorhandene Buchungen, bei denen fehlende Angaben aus der Datei
+   * nachgetragen wurden (z. B. Buchungstag der Bank).
+   */
+  backfilled: number;
+  /** Neu erkannte oder um die Gegenbuchung ergänzte Umbuchungen. */
+  transfersDetected: number;
   /** Zeilen eines anderen Auftragskontos. */
   otherAccount: number;
   pending: SkippedLine[];
@@ -212,6 +220,68 @@ function coverageWarnings(existing: Period[], period: Period): string[] {
   return warnings;
 }
 
+/** Neu erkannte Umbuchungen plus einseitige, deren Gegenbuchung jetzt importiert wurde. */
+const countDetected = (r: { created: number; completed: number }) => r.created + r.completed;
+
+/**
+ * Angaben, die eine bereits vorhandene Buchung beim erneuten Import
+ * nachgetragen bekommt, wenn sie in der Datenbank fehlen. Nur reine
+ * Bankdaten – Kategorie, Umbuchung, Notizen und alles von Hand Gesetzte
+ * bleiben unangetastet; Werte, die schon da sind, werden nie überschrieben.
+ */
+const BACKFILL_FIELDS = [
+  ['bank_booking_date', (t: RawTransaction) => t.bankBookingDate],
+  ['value_date', (t: RawTransaction) => t.valueDate],
+  ['counterparty_iban', (t: RawTransaction) => t.counterpartyIban],
+  ['creditor_id', (t: RawTransaction) => t.creditorId],
+  ['mandate_reference', (t: RawTransaction) => t.mandateReference],
+  ['balance_after_cents', (t: RawTransaction) => t.balanceAfterCents],
+  ['bank_reference', (t: RawTransaction) => t.bankReference],
+  ['booking_text', (t: RawTransaction) => (t.bookingText === '' ? null : t.bookingText)],
+] as const;
+
+type StoredRow = { id: number; import_batch_id: number | null; counterparty: string } & Record<
+  (typeof BACKFILL_FIELDS)[number][0],
+  string | number | null
+>;
+
+/**
+ * Trägt bei vorhandenen Buchungen (gleicher import_hash) fehlende Angaben
+ * aus der Datei nach. Liefert die Zahl ergänzter Buchungen und die
+ * betroffenen Importvorgänge.
+ */
+function backfillExisting(db: Db, existing: { t: RawTransaction; hash: string }[]): { count: number; batchIds: Set<number> } {
+  const select = db.prepare(
+    `SELECT id, import_batch_id, counterparty, ${BACKFILL_FIELDS.map(([column]) => column).join(', ')}
+       FROM transactions WHERE import_hash = ?`,
+  );
+  const batchIds = new Set<number>();
+  let count = 0;
+  for (const { t, hash } of existing) {
+    const row = select.get(hash) as StoredRow | undefined;
+    if (!row) continue;
+    const sets: string[] = [];
+    const values: (string | number)[] = [];
+    for (const [column, pick] of BACKFILL_FIELDS) {
+      const stored = row[column];
+      const fresh = pick(t);
+      if ((stored === null || stored === '') && fresh !== null) {
+        sets.push(`${column} = ?`);
+        values.push(fresh);
+      }
+    }
+    if (row.counterparty === '' && t.counterparty !== '') {
+      sets.push('counterparty = ?', 'counterparty_normalized = ?');
+      values.push(t.counterparty, normalizeCounterparty(t.counterparty));
+    }
+    if (sets.length === 0) continue;
+    db.prepare(`UPDATE transactions SET ${sets.join(', ')} WHERE id = ?`).run(...values, row.id);
+    count += 1;
+    if (row.import_batch_id !== null) batchIds.add(row.import_batch_id);
+  }
+  return { count, batchIds };
+}
+
 /**
  * Importiert eine Datei in ein Konto – als ein Importvorgang in einer
  * Transaktion, damit er als Einheit rückgängig gemacht werden kann.
@@ -273,10 +343,10 @@ export function importFile(db: Db, input: ImportInput): ImportResult {
 
   const hashes = importHashes(account.id, kept);
   const exists = db.prepare('SELECT 1 FROM transactions WHERE import_hash = ?');
-  const fresh = kept
-    .map((t, i) => ({ t, hash: hashes[i] as string }))
-    .filter(({ hash }) => exists.get(hash) === undefined);
-  const duplicates = kept.length - fresh.length;
+  const rows = kept.map((t, i) => ({ t, hash: hashes[i] as string, known: exists.get(hashes[i]) !== undefined }));
+  const fresh = rows.filter((r) => !r.known);
+  const known = rows.filter((r) => r.known);
+  const duplicates = known.length;
 
   const rowsTotal = parsed.transactions.length + parsed.pending.length + parsed.ignored.length;
   const result: ImportResult = {
@@ -290,19 +360,39 @@ export function importFile(db: Db, input: ImportInput): ImportResult {
     imported: fresh.length,
     categorized: 0,
     duplicates,
+    backfilled: 0,
+    transfersDetected: 0,
     otherAccount,
     pending: parsed.pending,
     ignored: parsed.ignored,
     warnings,
   };
 
-  if (fresh.length === 0) {
-    warnings.push('Alle Buchungen der Datei sind bereits vorhanden – es wurde nichts importiert.');
-    return result;
-  }
-
   const now = nowIso();
   db.transaction(() => {
+    const backfill = backfillExisting(db, known);
+    result.backfilled = backfill.count;
+    // Dieselbe Datei wie ein Import, dessen Kartenumsätze noch keinen
+    // Buchungstag der Bank hatten: dessen Zeitraum war aus dem Kaufdatum
+    // abgeleitet. Mit dem Buchungstag gilt jetzt der Zeitraum dieser Datei –
+    // genau wie nach „Rückgängig + neu importieren“.
+    if (backfill.batchIds.size > 0) {
+      const fixPeriod = db.prepare(
+        'UPDATE import_batches SET period_start = ?, period_end = ? WHERE id = ? AND file_sha256 = ?',
+      );
+      for (const batchId of backfill.batchIds) fixPeriod.run(period.start, period.end, batchId, fileSha256);
+    }
+
+    if (fresh.length === 0) {
+      warnings.push(
+        result.backfilled > 0
+          ? 'Alle Buchungen der Datei sind bereits vorhanden – es wurde nichts neu importiert.'
+          : 'Alle Buchungen der Datei sind bereits vorhanden – es wurde nichts importiert.',
+      );
+      if (result.backfilled > 0) result.transfersDetected = countDetected(detectTransfers(db));
+      return;
+    }
+
     const batch = db
       .prepare(
         `INSERT INTO import_batches
@@ -359,6 +449,9 @@ export function importFile(db: Db, input: ImportInput): ImportResult {
     result.batchId = batchId;
     // Regeln laufen beim Import automatisch (CLAUDE.md § 9).
     result.categorized = applyRules(db, { importBatchId: batchId });
+    // Umbuchungen danach erkennen (CLAUDE.md § 10, § 11) – über alle Konten,
+    // denn die Gegenbuchung kann aus einem früheren Import stammen.
+    result.transfersDetected = countDetected(detectTransfers(db));
   })();
 
   return result;
@@ -460,6 +553,8 @@ export function undoImport(db: Db, batchId: number): UndoResult {
   const deletedTransactions = db.transaction(() => {
     const deleted = db.prepare('DELETE FROM transactions WHERE import_batch_id = ?').run(batchId).changes;
     db.prepare('DELETE FROM import_batches WHERE id = ?').run(batchId);
+    // Umbuchungen, denen eine Seite fehlt, auflösen bzw. neu zuordnen.
+    repairTransfersAfterDelete(db);
     return deleted;
   })();
 

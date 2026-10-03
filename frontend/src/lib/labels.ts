@@ -1,6 +1,7 @@
 import type { AccountRole } from '../api/accounts';
 import type { Bucket } from '../api/categories';
 import type { PatternType, RuleField } from '../api/rules';
+import type { TransferKind } from '../api/transfers';
 
 export const ROLE_LABELS: Record<AccountRole, string> = {
   einnahmen: 'Einnahmen',
@@ -38,4 +39,10 @@ export const PATTERN_TYPE_HINTS: Record<PatternType, string> = {
   contains: 'Der Text muss irgendwo vorkommen. Groß-/Kleinschreibung egal, Sonderzeichen wie & , - * gelten wörtlich.',
   wildcard:
     '* = beliebig viele Zeichen, ? = genau ein Zeichen, alles andere wörtlich. Der Ausdruck muss den ganzen Text treffen: „REWE*“ = beginnt mit REWE.',
+};
+
+export const TRANSFER_KIND_LABELS: Record<TransferKind, string> = {
+  pair: 'Paar',
+  one_sided: 'einseitig (vermutet)',
+  card_settlement: 'Kartenabrechnung',
 };

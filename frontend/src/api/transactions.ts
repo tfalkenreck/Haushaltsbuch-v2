@@ -1,5 +1,6 @@
 import { apiRequest, query } from './client';
 import type { RuleSuggestion } from './rules';
+import type { TransferKind, TransferStatus } from './transfers';
 
 export type CategorySource = 'manual' | 'rule' | 'auto';
 
@@ -23,6 +24,12 @@ export interface Transaction {
   categoryPath: string | null;
   categorySource: CategorySource | null;
   categoryRuleId: number | null;
+  transferId: number | null;
+  transferKind: TransferKind | null;
+  transferStatus: TransferStatus | null;
+  /** manual = von Hand (auch „bewusst keine Umbuchung“), auto = erkannt. */
+  transferSource: 'manual' | 'auto' | null;
+  transferAccountName: string | null;
 }
 
 export interface TransactionPage {
@@ -30,6 +37,9 @@ export interface TransactionPage {
   total: number;
   inflowCents: number;
   outflowCents: number;
+  transferCount: number;
+  transferInflowCents: number;
+  transferOutflowCents: number;
   limit: number;
   offset: number;
 }
@@ -42,6 +52,7 @@ export interface TransactionFilter {
   q?: string | undefined;
   categoryId?: number | undefined;
   uncategorized?: boolean | undefined;
+  transfers?: 'only' | 'exclude' | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
 }

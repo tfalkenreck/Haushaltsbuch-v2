@@ -181,7 +181,10 @@ export function ImportPage({ params }: Props) {
             Kartenumsätzen nur das Kaufdatum gespeichert hat, nicht den Buchungstag der Bank. Exportzeitraum und
             Abdeckung können dadurch falsch sein (z. B. ein Monat „teilweise“, der nie exportiert wurde).
           </p>
-          <p>Jeden markierten Import einmal rückgängig machen und dieselbe Datei erneut importieren.</p>
+          <p>
+            Dieselbe Datei einfach erneut importieren: vorhandene Buchungen bekommen den fehlenden Buchungstag nachgetragen,
+            Kategorien und Umbuchungen bleiben erhalten.
+          </p>
         </div>
       )}
 

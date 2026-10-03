@@ -318,3 +318,30 @@ label.inline {
 table.data tr.inactive td {
   color: #8c959f;
 }
+
+/* --- Umbuchungen (Phase 4) ------------------------------------------------- */
+table.data tr.transfer td.num:not(.muted) {
+  color: #8c959f;
+  font-style: italic;
+}
+
+.transfer-tag {
+  display: inline-block;
+  padding: 0 0.35rem;
+  border-radius: 3px;
+  background: #ddf4ff;
+  color: #0969da;
+  text-decoration: none;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.transfer-cell select {
+  max-width: 12rem;
+}
+
+.reassign-list {
+  margin: 0.25rem 0 0.5rem;
+  max-height: 16rem;
+  overflow-y: auto;
+}

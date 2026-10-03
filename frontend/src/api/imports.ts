@@ -16,6 +16,9 @@ export interface ImportResult {
   imported: number;
   categorized: number;
   duplicates: number;
+  /** Vorhandene Buchungen, bei denen fehlende Angaben nachgetragen wurden. */
+  backfilled: number;
+  transfersDetected: number;
   otherAccount: number;
   pending: SkippedLine[];
   ignored: SkippedLine[];

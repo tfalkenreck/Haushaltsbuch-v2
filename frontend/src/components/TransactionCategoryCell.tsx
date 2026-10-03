@@ -25,7 +25,8 @@ export function TransactionCategoryCell({ transaction: t, categories, busy, onSe
       <select
         value={value}
         disabled={busy}
-        className={t.categoryId === null && !deliberateNone ? 'uncategorized' : undefined}
+        className={t.categoryId === null && !deliberateNone && t.transferId === null ? 'uncategorized' : undefined}
+        title={t.transferId !== null ? 'Umbuchung – braucht keine Kategorie und zählt in keiner Auswertung' : undefined}
         onChange={(e) => onSet(e.target.value === NONE ? null : Number(e.target.value))}
       >
         <option value={UNTOUCHED} disabled>

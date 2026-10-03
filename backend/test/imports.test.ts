@@ -209,6 +209,67 @@ describe('Kartenumsätze: Kaufdatum und Buchungstag der Bank', () => {
   });
 });
 
+describe('Erneuter Import trägt fehlende Angaben nach', () => {
+  /** Zustand vor Migration 004: Kartenumsätze ohne Buchungstag, Zeitraum aus dem Kaufdatum. */
+  function legacyVisa(): { id: number; batchId: number } {
+    const id = account('volksbank-owl', IBAN.volksbankVisa, 'kreditkarte');
+    const batchId = run(id, 'volksbank-owl/visa.csv').batchId as number;
+    db.prepare("UPDATE transactions SET bank_booking_date = NULL, balance_after_cents = NULL WHERE purpose LIKE '%Umsatz vom%'").run();
+    db.prepare("UPDATE import_batches SET period_start = '2026-09-28' WHERE id = ?").run(batchId);
+    return { id, batchId };
+  }
+
+  it('ergänzt den Buchungstag der Bank statt nur zu überspringen, und der Neuimport-Hinweis verschwindet', () => {
+    const { id, batchId } = legacyVisa();
+    expect(getAccount(db, id).needsReimport).toBe(true);
+
+    const result = run(id, 'volksbank-owl/visa.csv');
+    expect(result).toMatchObject({ batchId: null, imported: 0, duplicates: 4, backfilled: 2 });
+    expect(result.warnings).toContain('Alle Buchungen der Datei sind bereits vorhanden – es wurde nichts neu importiert.');
+
+    const rewe = db.prepare('SELECT booking_date, bank_booking_date, balance_after_cents FROM transactions WHERE amount_cents = -4210').get();
+    expect(rewe).toEqual({ booking_date: '2026-09-28', bank_booking_date: '2026-09-29', balance_after_cents: -34210 });
+    expect(getAccount(db, id).needsReimport).toBe(false);
+    expect(listImportBatches(db, id)).toEqual([expect.objectContaining({ id: batchId, needsReimport: false, periodStart: '2026-09-29' })]);
+    expect(listTransactions(db, { accountId: id }).total).toBe(4);
+  });
+
+  it('lässt Kategorien, Umbuchungen, Notizen und vorhandene Werte unangetastet', () => {
+    const { id } = legacyVisa();
+    const rewe = (db.prepare('SELECT id FROM transactions WHERE amount_cents = -4210').get() as { id: number }).id;
+    const lebensmittel = (db.prepare("SELECT id FROM categories WHERE name = 'Lebensmittel'").get() as { id: number }).id;
+    db.prepare("UPDATE transactions SET category_id = ?, category_source = 'manual', notes = 'Wocheneinkauf', transfer_source = 'manual', value_date = '2026-09-27' WHERE id = ?").run(
+      lebensmittel,
+      rewe,
+    );
+    const before = db.prepare('SELECT category_id, category_source, category_rule_id, transfer_id, transfer_source, notes, value_date FROM transactions ORDER BY id').all();
+
+    expect(run(id, 'volksbank-owl/visa.csv').backfilled).toBe(2);
+
+    const after = db.prepare('SELECT category_id, category_source, category_rule_id, transfer_id, transfer_source, notes, value_date FROM transactions ORDER BY id').all();
+    expect(after).toEqual(before);
+  });
+
+  it('meldet keine Nachträge, wenn nichts fehlt', () => {
+    const id = account('volksbank-owl', IBAN.volksbankGiro);
+    run(id, 'volksbank-owl/giro.csv');
+    const again = run(id, 'volksbank-owl/giro.csv');
+    expect(again).toMatchObject({ imported: 0, backfilled: 0 });
+    expect(again.warnings).toContain('Alle Buchungen der Datei sind bereits vorhanden – es wurde nichts importiert.');
+  });
+
+  it('ergänzt auch, wenn die Datei zusätzlich neue Buchungen enthält', () => {
+    const id = account('volksbank-owl', IBAN.volksbankGiro);
+    run(id, 'volksbank-owl/giro-oktober.csv');
+    db.prepare('UPDATE transactions SET creditor_id = NULL, mandate_reference = NULL').run();
+    const result = run(id, 'volksbank-owl/giro.csv');
+    expect(result).toMatchObject({ imported: 8, duplicates: 2, backfilled: 2 });
+    expect(db.prepare("SELECT creditor_id FROM transactions WHERE counterparty = 'BAECKEREI MUSTERMANN'").get()).toEqual({
+      creditor_id: 'DE00ZZZ00000000001',
+    });
+  });
+});
+
 describe('Prüfung des Auftragskontos', () => {
   it('importiert aus einer Datei mit mehreren Konten nur die passenden Zeilen', () => {
     const giro = account('volksbank-owl', IBAN.volksbankGiro, 'einnahmen', 'Giro');
@@ -401,13 +462,17 @@ describe('Transaktionsliste', () => {
     run(cd, 'comdirect/girokonto.csv');
   });
 
-  it('listet neueste zuerst und summiert Zu- und Abflüsse im Backend', () => {
+  it('listet neueste zuerst und summiert Zu- und Abflüsse im Backend – ohne Umbuchungen', () => {
     const page = listTransactions(db, {});
     expect(page.total).toBe(16);
     expect(page.items[0]?.bookingDate).toBe('2026-10-02');
-    const all = db.prepare('SELECT amount_cents AS a FROM transactions').all() as { a: number }[];
-    expect(page.inflowCents).toBe(all.filter((r) => r.a > 0).reduce((s, r) => s + r.a, 0));
-    expect(page.outflowCents).toBe(all.filter((r) => r.a < 0).reduce((s, r) => s + r.a, 0));
+    const rows = db.prepare('SELECT amount_cents AS a, transfer_id AS tr FROM transactions').all() as { a: number; tr: number | null }[];
+    const real = rows.filter((r) => r.tr === null);
+    expect(page.inflowCents).toBe(real.filter((r) => r.a > 0).reduce((s, r) => s + r.a, 0));
+    expect(page.outflowCents).toBe(real.filter((r) => r.a < 0).reduce((s, r) => s + r.a, 0));
+    // Dauerauftrag ans Ausgabenkonto: Gegen-IBAN ist das Comdirect-Konto.
+    expect(page.transferCount).toBe(1);
+    expect(page.transferOutflowCents).toBe(-123456);
   });
 
   it('filtert nach Konto, Zeitraum und Suchtext', () => {

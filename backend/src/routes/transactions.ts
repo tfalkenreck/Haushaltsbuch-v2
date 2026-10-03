@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/connection.js';
+import { markTransfer, resetTransfer, unmarkTransfer } from '../services/transfers.js';
 import {
   listTransactions,
   resetTransactionCategory,
@@ -27,6 +28,7 @@ const listQuery = {
     q: { type: 'string', maxLength: 200 },
     categoryId: { type: 'integer', minimum: 1 },
     uncategorized: { type: 'boolean' },
+    transfers: { type: 'string', enum: ['only', 'exclude'] },
     limit: { type: 'integer', minimum: 1, maximum: 500 },
     offset: { type: 'integer', minimum: 0 },
   },
@@ -59,5 +61,42 @@ export function transactionRoutes(app: FastifyInstance, db: Db): void {
     '/api/transactions/:id/category',
     { schema: { params: idParams } },
     async (request) => resetTransactionCategory(db, request.params.id),
+  );
+
+  /**
+   * Von Hand als Umbuchung markieren. Mit Gegenkonto wird dort die
+   * Gegenbuchung gesucht; bei einer Kreditkarte entsteht eine Kartenabrechnung.
+   */
+  app.put<{ Params: { id: number }; Body: { accountId: number | null } }>(
+    '/api/transactions/:id/transfer',
+    {
+      schema: {
+        params: idParams,
+        body: {
+          type: 'object',
+          required: ['accountId'],
+          additionalProperties: false,
+          properties: { accountId: { type: ['integer', 'null'], minimum: 1 } },
+        },
+      },
+    },
+    async (request) => markTransfer(db, request.params.id, { accountId: request.body.accountId }),
+  );
+
+  /** „Keine Umbuchung“ – zählt wieder als Einnahme/Ausgabe, Erkennung lässt die Buchung in Ruhe. */
+  app.delete<{ Params: { id: number } }>(
+    '/api/transactions/:id/transfer',
+    { schema: { params: idParams } },
+    async (request, reply) => {
+      unmarkTransfer(db, request.params.id);
+      return reply.status(204).send();
+    },
+  );
+
+  /** Handarbeit aufheben – die Erkennung darf die Buchung wieder einordnen (läuft sofort). */
+  app.post<{ Params: { id: number } }>(
+    '/api/transactions/:id/transfer/reset',
+    { schema: { params: idParams } },
+    async (request) => resetTransfer(db, request.params.id),
   );
 }

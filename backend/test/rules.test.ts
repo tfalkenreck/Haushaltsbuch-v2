@@ -11,7 +11,10 @@ import {
   listRules,
   pickRule,
   previewPattern,
+  previewReassign,
   rankRules,
+  reassignCandidates,
+  reassignToRule,
   suggestRule,
   updateRule,
 } from '../src/services/rules.js';
@@ -281,19 +284,81 @@ describe('Manuell kategorisieren und Lernen aus Korrekturen', () => {
   });
 });
 
+describe('„Auch diese umstellen“', () => {
+  beforeEach(() => {
+    importGiro();
+  });
+
+  /** Allgemeine Regel sortiert falsch ein: Bäckerei ×2, Vermieter, Telefon … → Sonstiges. */
+  function wrongRule() {
+    const general = createRule(db, { field: 'counterparty', patternType: 'contains', pattern: 'b', categoryId: category('Sonstiges') });
+    applyRules(db);
+    return general;
+  }
+
+  function bakeryIds(): number[] {
+    return (db.prepare("SELECT id FROM transactions WHERE counterparty = 'Bäckerei Müller' ORDER BY id").all() as { id: number }[]).map((r) => r.id);
+  }
+
+  it('zählt im Vorschlag nur per Regel einsortierte Buchungen, bei denen die neue Regel gewinnt', () => {
+    wrongRule();
+    const [first, second] = bakeryIds();
+    const change = setTransactionCategory(db, first as number, category('Lebensmittel'));
+    expect(change.suggestion).toMatchObject({ pattern: 'Bäckerei Müller', priority: 1, otherRuleMatches: 1, uncategorizedMatches: 0 });
+
+    const preview = previewReassign(db, { ...(change.suggestion as NonNullable<typeof change.suggestion>) });
+    expect(preview).toEqual([
+      expect.objectContaining({ id: second, counterparty: 'Bäckerei Müller', categoryPath: 'Sonstiges', rulePattern: 'b', amountCents: -320 }),
+    ]);
+  });
+
+  it('zeigt von Hand gesetzte Kategorien nie an und stellt sie nie um', () => {
+    wrongRule();
+    const [first, second] = bakeryIds();
+    setTransactionCategory(db, second as number, category('Restaurants & Cafés')); // Handarbeit
+    const change = setTransactionCategory(db, first as number, category('Lebensmittel'));
+    expect(change.suggestion?.otherRuleMatches).toBe(0);
+
+    const learned = createRule(db, { ...(change.suggestion as NonNullable<typeof change.suggestion>) });
+    expect(reassignCandidates(db, learned.id)).toEqual([]);
+    expect(reassignToRule(db, learned.id, [first as number, second as number])).toBe(0);
+    expect(categoryOf('Bäckerei Müller').categoryId).toBe(category('Lebensmittel'));
+    const secondRow = db.prepare('SELECT category_id, category_source FROM transactions WHERE id = ?').get(second) as Record<string, unknown>;
+    expect(secondRow).toEqual({ category_id: category('Restaurants & Cafés'), category_source: 'manual' });
+  });
+
+  it('stellt nur die ausdrücklich gewählten, weiterhin passenden Buchungen um', () => {
+    const general = wrongRule();
+    const [first, second] = bakeryIds();
+    const change = setTransactionCategory(db, first as number, category('Lebensmittel'));
+    const learned = createRule(db, { ...(change.suggestion as NonNullable<typeof change.suggestion>) });
+    const vermieter = txId('Vermieter Beispiel'); // per Regel „b“, passt aber nicht auf die neue Regel
+
+    expect(reassignCandidates(db, learned.id).map((c) => c.id)).toEqual([second]);
+    expect(reassignToRule(db, learned.id, [second as number, vermieter])).toBe(1);
+
+    const row = db.prepare('SELECT category_id, category_source, category_rule_id FROM transactions WHERE id = ?').get(second) as Record<string, unknown>;
+    expect(row).toEqual({ category_id: category('Lebensmittel'), category_source: 'rule', category_rule_id: learned.id });
+    expect(categoryOf('Vermieter Beispiel')).toMatchObject({ ruleId: general.id, categoryId: category('Sonstiges') });
+    // Erneut: nichts mehr umzustellen.
+    expect(reassignCandidates(db, learned.id)).toEqual([]);
+  });
+});
+
 describe('Unkategorisierte Buchungen', () => {
   beforeEach(() => {
     importGiro();
   });
 
   it('liefert Anzahl und Summen und lässt sich filtern', () => {
+    // 10 Buchungen, davon eine Umbuchung („Umbuchung Ausgabenkonto“) – sie zählt nicht.
     const before = uncategorizedSummary(db);
-    expect(before).toMatchObject({ count: 10, inflowCents: 285000 });
+    expect(before).toMatchObject({ count: 9, inflowCents: 285000 });
 
     setTransactionCategory(db, txId('Muster Arbeitgeber GmbH'), category('Einkommen'));
     const after = uncategorizedSummary(db);
-    expect(after).toEqual({ count: 9, inflowCents: 0, outflowCents: before.outflowCents });
-    expect(listTransactions(db, { uncategorized: true }).total).toBe(9);
+    expect(after).toEqual({ count: 8, inflowCents: 0, outflowCents: before.outflowCents });
+    expect(listTransactions(db, { uncategorized: true }).total).toBe(8);
   });
 
   it('filtert nach Kategorie inklusive Unterkategorien', () => {

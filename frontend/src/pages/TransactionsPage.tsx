@@ -9,8 +9,10 @@ import {
   type Transaction,
   type TransactionPage,
 } from '../api/transactions';
+import { markTransfer, resetTransfer, unmarkTransfer } from '../api/transfers';
 import { RuleSuggestionView } from '../components/RuleSuggestionView';
 import { TransactionCategoryCell } from '../components/TransactionCategoryCell';
+import { TransactionTransferCell } from '../components/TransactionTransferCell';
 import { notifyDataChanged } from '../lib/events';
 import { formatCents, formatDate } from '../lib/format';
 import { hrefFor } from '../lib/route';
@@ -29,6 +31,8 @@ function filterFromParams(params: URLSearchParams) {
     const value = Number(params.get(key));
     return Number.isInteger(value) && value > 0 ? value : undefined;
   };
+  const transfers = params.get('transfers');
+  const transferFilter: 'only' | 'exclude' | undefined = transfers === 'only' || transfers === 'exclude' ? transfers : undefined;
   return {
     accountId: num('accountId'),
     importBatchId: num('importBatchId'),
@@ -37,6 +41,7 @@ function filterFromParams(params: URLSearchParams) {
     q: params.get('q') ?? undefined,
     categoryId: num('categoryId'),
     uncategorized: params.get('uncategorized') === '1' ? true : undefined,
+    transfers: transferFilter,
     offset: num('offset') ?? 0,
   };
 }
@@ -81,6 +86,7 @@ export function TransactionsPage({ params }: Props) {
       q: next.q,
       categoryId: next.categoryId,
       uncategorized: next.uncategorized ? 1 : undefined,
+      transfers: next.transfers,
       offset: next.offset || undefined,
     });
   };
@@ -112,6 +118,22 @@ export function TransactionsPage({ params }: Props) {
     setError(null);
     try {
       replaceItem(await resetTransactionCategory(t.id));
+      notifyDataChanged();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  /** Umbuchung setzen/aufheben – betrifft ggf. auch die Gegenbuchung, daher neu laden. */
+  async function changeTransfer(t: Transaction, action: () => Promise<unknown>) {
+    setBusyId(t.id);
+    setError(null);
+    setInfo(null);
+    try {
+      await action();
+      reload();
       notifyDataChanged();
     } catch (err) {
       setError(message(err));
@@ -184,6 +206,17 @@ export function TransactionsPage({ params }: Props) {
           </select>
         </label>
         <label>
+          Umbuchungen
+          <select
+            value={filter.transfers ?? ''}
+            onChange={(e) => navigate({ transfers: (e.target.value || undefined) as 'only' | 'exclude' | undefined })}
+          >
+            <option value="">mit Umbuchungen</option>
+            <option value="exclude">ohne Umbuchungen</option>
+            <option value="only">nur Umbuchungen</option>
+          </select>
+        </label>
+        <label>
           Suche (Gegenpartei, Verwendungszweck, Vorgang)
           <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} />
         </label>
@@ -220,6 +253,17 @@ export function TransactionsPage({ params }: Props) {
           <p className="summary">
             {page.total} Buchungen · Zuflüsse <span className="amount-in">{formatCents(page.inflowCents)}</span> ·
             Abflüsse <span className="amount-out">{formatCents(page.outflowCents)}</span>
+            {page.transferCount > 0 && (
+              <span className="muted">
+                {' '}
+                · {page.transferCount} Umbuchung(en) (
+                {[page.transferInflowCents, page.transferOutflowCents]
+                  .filter((c) => c !== 0)
+                  .map((c) => formatCents(c, { sign: true }))
+                  .join(' / ')}
+                ) zählen nicht als Einnahme oder Ausgabe
+              </span>
+            )}
           </p>
 
           {page.items.length === 0 ? (
@@ -235,13 +279,14 @@ export function TransactionsPage({ params }: Props) {
                   <th>Gegenpartei</th>
                   <th>Verwendungszweck</th>
                   <th>Kategorie</th>
+                  <th>Umbuchung</th>
                   <th className="num">Betrag</th>
                   <th className="num">Saldo</th>
                 </tr>
               </thead>
               <tbody>
                 {page.items.map((t) => (
-                  <tr key={t.id}>
+                  <tr key={t.id} className={t.transferId !== null ? 'transfer' : undefined}>
                     <td title={t.valueDate ? `Valuta ${formatDate(t.valueDate)}` : undefined}>{formatDate(t.bookingDate)}</td>
                     <td>{t.accountName}</td>
                     <td>
@@ -256,6 +301,16 @@ export function TransactionsPage({ params }: Props) {
                         busy={busyId === t.id}
                         onSet={(categoryId) => void changeCategory(t, categoryId)}
                         onReset={() => void resetCategory(t)}
+                      />
+                    </td>
+                    <td>
+                      <TransactionTransferCell
+                        transaction={t}
+                        accounts={accounts}
+                        busy={busyId === t.id}
+                        onMark={(accountId) => void changeTransfer(t, () => markTransfer(t.id, accountId))}
+                        onUnmark={() => void changeTransfer(t, () => unmarkTransfer(t.id))}
+                        onReset={() => void changeTransfer(t, () => resetTransfer(t.id))}
                       />
                     </td>
                     <td className={`num ${t.amountCents < 0 ? 'amount-out' : 'amount-in'}`}>

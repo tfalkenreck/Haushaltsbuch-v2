@@ -56,3 +56,28 @@ export const previewPattern = (input: { field: RuleField; patternType: PatternTy
   apiRequest<PatternPreview>('POST', '/rules/preview', input);
 export const applyAllRules = () => apiRequest<{ categorized: number }>('POST', '/rules/apply');
 export const applyRule = (id: number) => apiRequest<{ categorized: number }>('POST', `/rules/${id}/apply`);
+
+export interface ReassignCandidate {
+  id: number;
+  accountName: string;
+  bookingDate: string;
+  amountCents: number;
+  counterparty: string;
+  purpose: string;
+  categoryPath: string;
+  rulePattern: string | null;
+}
+
+/** „Auch diese umstellen“ – Vorschau, bevor die Regel gespeichert ist. */
+export const previewReassign = (input: {
+  field: RuleField;
+  patternType: PatternType;
+  pattern: string;
+  categoryId: number;
+  priority: number;
+  ruleId: number | null;
+}) => apiRequest<ReassignCandidate[]>('POST', '/rules/reassign-preview', input);
+
+/** Ausgewählte, per Regel einsortierte Buchungen umstellen (nie von Hand gesetzte). */
+export const reassignToRule = (ruleId: number, transactionIds: number[]) =>
+  apiRequest<{ reassigned: number }>('POST', `/rules/${ruleId}/reassign`, { transactionIds });

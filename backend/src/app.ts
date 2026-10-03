@@ -6,6 +6,7 @@ import { categoryRoutes } from './routes/categories.js';
 import { importRoutes } from './routes/imports.js';
 import { ruleRoutes } from './routes/rules.js';
 import { transactionRoutes } from './routes/transactions.js';
+import { transferRoutes } from './routes/transfers.js';
 
 export interface AppOptions {
   /** Geöffnete und migrierte Datenbank (Tests: ':memory:'). */
@@ -39,6 +40,7 @@ export function buildApp(options: AppOptions): FastifyInstance {
   transactionRoutes(app, options.db);
   categoryRoutes(app, options.db);
   ruleRoutes(app, options.db);
+  transferRoutes(app, options.db);
 
   return app;
 }

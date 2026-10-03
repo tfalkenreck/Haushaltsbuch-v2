@@ -469,7 +469,7 @@ schwankende Schreibweise der Gegenpartei).
 | 1 | Datenmodell (Migration 001), Migrationsrunner, Konten mit Rolle und wählbarem Adapter | erledigt |
 | 2 | Import: Adapter-Interface, Volksbank OWL, Comdirect, Duplikaterkennung, Abdeckung, Rückgängig, Transaktionsliste | erledigt |
 | 3 | Kategorisierung: Kategorien, Regeln, manuelles Umkategorisieren, Lernen aus Korrekturen | erledigt |
-| 4 | Umbuchungen und Kreditkarte | offen |
+| 4 | Umbuchungen und Kreditkarte | erledigt |
 | 5 | Deckungsprüfung und Ausgaben am Ausgabenkonto vorbei | offen |
 | 6 | Fixkosten/Abos manuell plus automatische Erkennung | offen |
 | 7 | Dashboard, Budget, Prognose, Sparziele | offen |
@@ -570,14 +570,40 @@ Status nach Abschluss einer Phase hier aktualisieren.
 | Regel löschen | Wahlweise mit Entfernen der von ihr gesetzten Kategorien; Handarbeit bleibt immer |
 | Kategorien | Zwei Ebenen. Löschen nur unbenutzt (keine Buchungen, Regeln, Unterkategorien, Fixkosten), sonst deaktivieren. Name je Ebene eindeutig (ohne Groß-/Kleinschreibung). Neue Unterkategorie erbt standardmäßig; eine Wurzel, die Unterkategorie wird, behält ihren Bucket |
 | Kategorie-Filter | Filter auf eine Wurzel schließt ihre Unterkategorien ein |
+| „Auch diese umstellen“ (Nachtrag, von Tim gewünscht) | Der Regelvorschlag zählt Buchungen, die eine andere Regel anders einsortiert hat **und** bei denen die neue Regel gewinnt. Ausdrücklicher Knopf zeigt sie vorher als Liste (abwählbar); umgestellt wird beim Speichern nur, was bei erneuter Prüfung noch `category_source = 'rule'` hat – von Hand gesetzte Kategorien nie |
+
+**Nachtrag zu Phase 2 (3. Oktober 2026, von Tim gewünscht)**
+
+| Frage | Entscheidung |
+|-------|--------------|
+| Erneuter Import vorhandener Buchungen | Gleicher `import_hash` → fehlende Bankangaben werden nachgetragen statt nur übersprungen: `bank_booking_date`, `value_date`, `counterparty_iban`, `creditor_id`, `mandate_reference`, `balance_after_cents`, `bank_reference`, leere `booking_text`/`counterparty`. Nur leere Felder, vorhandene Werte nie überschrieben; Kategorie, Umbuchung, Notizen und alle manuellen Zuordnungen bleiben. Die Meldung nennt die Zahl ergänzter Buchungen. Damit verschwindet `needsReimport` ohne Rückgängig |
+| Zeitraum beim Nachtrag | Stammt die Buchung aus einem Import **derselben Datei** (gleicher SHA-256), übernimmt dieser Importvorgang den jetzt aus dem Buchungstag der Bank berechneten Zeitraum – wie nach Rückgängig + Neuimport. Andere Importvorgänge behalten ihren Zeitraum |
+
+**Getroffen in Phase 4 (3. Oktober 2026)**
+
+| Frage | Entscheidung |
+|-------|--------------|
+| Wirkung erkannter Umbuchungen | Jede Buchung mit `transfer_id` zählt sofort nirgends als Einnahme oder Ausgabe – auch nicht in der Leiste der unkategorisierten Buchungen und in den Summen der Buchungsliste (dort separat ausgewiesen). Erkanntes trägt `status = 'suggested'` und steht in der Übersicht „Umbuchungen“ zum Bestätigen oder Aufheben; von Hand Gesetztes ist `confirmed` |
+| Unkategorisiert (Änderung zu Phase 3) | = `category_id IS NULL AND transfer_id IS NULL`. Umbuchungen brauchen keine Kategorie |
+| Kategorien | Die Erkennung ändert nie eine Kategorie; eine per Regel oder von Hand gesetzte Kategorie bleibt an der Umbuchung stehen (zählt aber nicht) |
+| Wer wird erkannt | Nur Buchungen mit `transfer_id IS NULL AND transfer_source IS NULL`. „Keine Umbuchung“ und „Aufheben“ setzen `transfer_source = 'manual'` ohne `transfer_id`; „Automatik zulassen“ hebt das auf und erkennt sofort neu |
+| Reihenfolge der Erkennung | Nach jedem Import (und Rückgängig, „Erkennung jetzt ausführen“) über alle Konten: 1. Kartenabrechnungen, 2. Gegenbuchung zu automatisch erkannten einseitigen Umbuchungen (→ Paar), 3. Paare, 4. vermutete einseitige |
+| Paar | Gleicher Betrag, umgekehrtes Vorzeichen, Buchungsdatum höchstens **5 Tage** auseinander (Karfreitag–Ostermontag), zwei verschiedene Konten, keine Kreditkartenkonten. Ausgeschlossen, wenn eine Seite eine Gegen-IBAN nennt, die nicht zum anderen Konto gehört. Vorrang: passende IBAN, dann kleinster Abstand |
+| Einseitig, vermutet | Gegen-IBAN = IBAN eines anderen angelegten Kontos, eine solche IBAN im Text (auch mit Leerzeichen), oder Verwendungszweck mit „Umbuchung“, „Übertrag“, „eigenes Konto“, „Kontoausgleich“. Kartenumsätze nie |
+| Kartenabrechnung erkennen | Ausgleich auf dem Kartenkonto (Gutschrift mit „Ausgleich“, „Kartenkonto“, „Abrechnung“ … oder eigener IBAN) plus Abbuchung gleichen Betrags (≤ 5 Tage) auf einem anderen Konto. Ohne importierten Ausgleich: Abbuchung nennt die IBAN der Karte, oder nennt „Visa“/„Kreditkarte“/„Mastercard“ **und** der Betrag entspricht genau einer Summe von Kartenumsätzen (sonst würden Kartenentgelte wie „Entgelt Visa-Kreditkarte“ erfasst) |
+| Abrechnungszeitraum | Zusammenhängende Kaufdaten (`booking_date`) vor dem Tag der Abrechnung, deren Summe (Käufe minus Erstattungen) genau dem Betrag entspricht; Beginn = Tag nach dem Ende der vorigen Abrechnung derselben Karte, sonst frei gesucht (bis 62 Tage zurück). Ein Kauftag wird nie geteilt; bevorzugt das späteste Ende. Ohne exakte Summe: vom Beginn bis zum Vortag der Abrechnung. Vorgeschlagene automatische Zeiträume werden bei jeder Erkennung neu bestimmt (neue Kartenumsätze), bestätigte und von Hand angelegte bleiben |
+| Plausibilität | Wird bei jeder Anzeige gerechnet: Abbuchung minus Summe der Kartenumsätze im Zeitraum. Abweichung ≠ 0 → Hinweis „fehlt ein Kartenimport oder ein Umsatz?“; fehlende Seite (Abbuchung bzw. Ausgleich nicht importiert) wird ebenfalls angezeigt |
+| Von Hand markieren | Mit Gegenkonto: dort wird die Gegenbuchung gesucht (gleicher Betrag, ≤ 5 Tage, nie eine als „keine Umbuchung“ markierte) → Paar, sonst einseitig. Ist das Gegenkonto eine Kreditkarte (bzw. die Buchung ein Ausgleich auf der Karte) → Kartenabrechnung mit berechnetem Zeitraum. Ohne Gegenkonto: einseitig |
+| Aufheben | „Aufheben“ in der Übersicht: alle Buchungen der Umbuchung → „keine Umbuchung“ (kommen nicht wieder). „Keine Umbuchung“ an einer Buchung: nur diese wird gesperrt; die Gegenbuchung einer automatischen Umbuchung wird frei, eine manuelle bleibt mit der übrigen Seite (Paar → einseitig) |
+| Rückgängig | Umbuchungen ohne Buchung verschwinden; automatische Paare mit nur noch einer Seite werden aufgelöst und die übrige Buchung neu erkannt; manuelle werden einseitig |
 
 **Offene Punkte**
 
-- **Regelvorschlag bei bereits per Regel falsch einsortierten Buchungen:**
-  Laut § 9 wendet „Regeln anwenden“ nur auf unkategorisierte Buchungen an.
-  Der Vorschlag nennt deshalb nur die Anzahl der Buchungen, die eine
-  andere Regel anders einsortiert hat; sie bleiben unverändert. Klären, ob
-  dafür ein ausdrücklicher „auch diese umstellen“-Knopf gewünscht ist.
+- **Umbuchungs-Erkennung an echten Daten prüfen:** Text der Visa-
+  Sammelabbuchung auf dem Girokonto und des Ausgleichs auf dem
+  Kartenkonto sind nur synthetisch nachgebildet. Beim ersten echten Import
+  prüfen, ob die Begriffe in `transfer-detection.ts` passen.
+
 - **Encoding der Exporte** (Volksbank, Comdirect) und Comdirect-Metadaten-
   bzw. „offen“-Zeilen noch ungeprüft – siehe `docs/bankformate.md` § 4.
 - **Rollup-Pin per `overrides` (`rollup@4.63.6`):** Rollup 4.64.0

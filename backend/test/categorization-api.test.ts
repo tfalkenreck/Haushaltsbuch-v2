@@ -84,6 +84,37 @@ describe('Regeln-API und Kategorisieren', () => {
     expect(removed.json()).toEqual({ unassigned: 2 });
   });
 
+  it('zeigt vor „auch diese umstellen“ die betroffenen Buchungen und stellt nur per Regel gesetzte um', async () => {
+    const sonstiges = await categoryId('Sonstiges');
+    const lebensmittel = await categoryId('Lebensmittel');
+    await app.inject({ method: 'POST', url: '/api/rules', payload: { field: 'counterparty', patternType: 'contains', pattern: 'bäckerei', categoryId: sonstiges } });
+    await app.inject({ method: 'POST', url: '/api/rules/apply' });
+
+    const list = (await app.inject({ method: 'GET', url: '/api/transactions?q=B%C3%A4ckerei%20M%C3%BCller' })).json();
+    const [first, second] = list.items as { id: number }[];
+    const put = await app.inject({ method: 'PUT', url: `/api/transactions/${first?.id}/category`, payload: { categoryId: lebensmittel } });
+    const suggestion = put.json().suggestion;
+    expect(suggestion).toMatchObject({ otherRuleMatches: 1 });
+
+    const { field, patternType, pattern, priority, existingRuleId } = suggestion;
+    const preview = await app.inject({
+      method: 'POST',
+      url: '/api/rules/reassign-preview',
+      payload: { field, patternType, pattern, categoryId: lebensmittel, priority, ruleId: existingRuleId },
+    });
+    expect(preview.json()).toEqual([expect.objectContaining({ id: second?.id, categoryPath: 'Sonstiges', rulePattern: 'bäckerei' })]);
+
+    const rule = (await app.inject({ method: 'POST', url: '/api/rules', payload: { field, patternType, pattern, categoryId: lebensmittel, priority } })).json();
+    const reassigned = await app.inject({
+      method: 'POST',
+      url: `/api/rules/${rule.id}/reassign`,
+      payload: { transactionIds: [first?.id, second?.id] },
+    });
+    expect(reassigned.json()).toEqual({ reassigned: 1 });
+    expect((await app.inject({ method: 'GET', url: `/api/rules/${rule.id}/reassign` })).json()).toEqual([]);
+    expect((await app.inject({ method: 'GET', url: `/api/transactions?categoryId=${lebensmittel}` })).json().total).toBe(2);
+  });
+
   it('lehnt einen unbekannten Mustertyp ab', async () => {
     const res = await app.inject({
       method: 'POST',
@@ -95,7 +126,7 @@ describe('Regeln-API und Kategorisieren', () => {
 
   it('kategorisiert von Hand, liefert Regelvorschlag und hebt Handarbeit wieder auf', async () => {
     const list = (await app.inject({ method: 'GET', url: '/api/transactions?uncategorized=true' })).json();
-    expect(list.total).toBe(10);
+    expect(list.total).toBe(9); // ohne die Umbuchung
     const tx = list.items.find((t: { counterparty: string }) => t.counterparty === 'Vermieter Beispiel');
 
     const put = await app.inject({
@@ -110,7 +141,8 @@ describe('Regeln-API und Kategorisieren', () => {
     });
 
     const summary = (await app.inject({ method: 'GET', url: '/api/transactions/uncategorized' })).json();
-    expect(summary.count).toBe(9);
+    // 10 Buchungen − 1 Umbuchung − 1 eben kategorisierte
+    expect(summary.count).toBe(8);
 
     const reset = await app.inject({ method: 'DELETE', url: `/api/transactions/${tx.id}/category` });
     expect(reset.json()).toMatchObject({ categoryId: null, categorySource: null });

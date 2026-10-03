@@ -10,6 +10,7 @@ export function ImportResultView({ result }: { result: ImportResult }) {
         <strong>{result.fileName}</strong>: {result.imported} neue Buchungen
         {result.imported > 0 && ` (${result.categorized} per Regel kategorisiert)`}
         {result.duplicates > 0 && `, ${result.duplicates} bereits vorhanden`}
+        {result.backfilled > 0 && ` (davon ${result.backfilled} um fehlende Angaben wie den Buchungstag der Bank ergänzt)`}
         {result.otherAccount > 0 && `, ${result.otherAccount} von einem anderen Konto`}. Zeitraum{' '}
         {formatDate(result.periodStart)} – {formatDate(result.periodEnd)}.
         {result.batchId !== null && (
@@ -21,6 +22,13 @@ export function ImportResultView({ result }: { result: ImportResult }) {
           </>
         )}
       </p>
+
+      {result.transfersDetected > 0 && (
+        <p>
+          {result.transfersDetected} Umbuchung(en) zwischen eigenen Konten erkannt – sie zählen nicht als Einnahme oder
+          Ausgabe. <a href={hrefFor('umbuchungen', { status: 'suggested' })}>Bitte prüfen</a>
+        </p>
+      )}
 
       {result.warnings.length > 0 && (
         <ul className="warnings">

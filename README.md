@@ -7,16 +7,19 @@ Dauerauftrag aufs Ausgabenkonto noch reicht.
 Alle Daten bleiben auf dem eigenen Rechner – keine Cloud, keine Telemetrie.
 Die vollständige Spezifikation steht in [`CLAUDE.md`](CLAUDE.md).
 
-> **Stand:** Phase 3 – Kontenverwaltung und CSV-Import (Volksbank OWL
+> **Stand:** Phase 4 – Kontenverwaltung und CSV-Import (Volksbank OWL
 > Giro/Spar/Visa, Comdirect) mit Duplikaterkennung, Abdeckung pro Konto,
 > Rückgängig je Importvorgang und Buchungsliste; Kategorien mit
 > 50/30/20-Bucket, Regeln (Suchtext oder Platzhalter, Priorität),
 > manuelles Kategorisieren mit Regelvorschlag und ständig sichtbare
-> Anzahl/Summe unkategorisierter Buchungen. Umbuchungen folgen in Phase 4.
+> Anzahl/Summe unkategorisierter Buchungen; Umbuchungen zwischen eigenen
+> Konten (Paare, vermutete einseitige, Kartenabrechnung mit
+> Plausibilitätsprüfung) mit eigener Übersichtsseite.
 >
-> **Nach dem Update auf diesen Stand:** Visa-Importe aus Phase 2 einmal
-> rückgängig machen und neu importieren (die Importseite markiert sie) –
-> sonst stimmen Exportzeitraum und Abdeckung der Karte nicht.
+> **Nach dem Update auf diesen Stand:** Visa-Importe aus Phase 2 (die
+> Importseite markiert sie) einfach erneut importieren – vorhandene
+> Buchungen bekommen den fehlenden Buchungstag der Bank nachgetragen,
+> Kategorien und Umbuchungen bleiben erhalten.
 
 ---
 
