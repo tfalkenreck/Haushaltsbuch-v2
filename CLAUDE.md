@@ -514,9 +514,11 @@ Status nach Abschluss einer Phase hier aktualisieren.
 | Gemeinschaftskonto | nicht enthalten |
 | Banking-API | außerhalb des Umfangs, CSV-Import reicht |
 | Vitest-Advisory GHSA-82fw-gwwq-j7x9 | erledigt: Vitest 5.0.3 (Beginn Phase 1) |
+| Hash-Kollision bei echten Doppelbuchungen | `import_hash` enthält zusätzlich die laufende Nummer identischer Zeilen (gleiches Konto, Datum, Betrag, Verwendungszweck) innerhalb einer Datei. Zwei echte Bäcker-Zahlungen bleiben zwei Buchungen; derselbe Export erneut importiert bleibt duplikatfrei |
+| Visa-Buchungsdatum | Kaufdatum aus `Umsatz vom …` im Verwendungszweck ist `booking_date` |
 | Visa-Format | identisch mit Volksbank-Girokonto (gleiche 18 Spalten); Unterschiede nur im Inhalt, siehe `docs/bankformate.md` |
 
-**Getroffen in Phase 1 (3. Oktober 2026)**
+**Getroffen in Phase 1 (3. Oktober 2026, von Tim bestätigt)**
 
 | Frage | Entscheidung |
 |-------|--------------|
@@ -532,11 +534,6 @@ Status nach Abschluss einer Phase hier aktualisieren.
 
 **Offene Punkte**
 
-- **Hash-Kollision bei echten Doppelbuchungen:** Zwei identische Buchungen
-  am selben Tag (gleicher Betrag, gleicher Verwendungszweck, z. B. zwei
-  Kartenzahlungen beim Bäcker) ergeben denselben `import_hash` – die zweite
-  ginge verloren. Vorschlag für Phase 2: laufende Nummer identischer Zeilen
-  innerhalb einer Datei mit in den Hash aufnehmen. Vor Umsetzung klären.
 - **Encoding der Exporte** (Volksbank, Comdirect) und Comdirect-Metadaten-
   bzw. „offen“-Zeilen noch ungeprüft – siehe `docs/bankformate.md` § 4.
 - **Rollup-Pin per `overrides` (`rollup@4.63.6`):** Rollup 4.64.0

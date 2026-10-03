@@ -6,7 +6,8 @@ bekannte Dokumentations-Beispiel-IBANs. Struktur, Spaltenreihenfolge,
 Quoting und Schreibweisen entsprechen den echten Exporten (Stand
 Oktober 2026).
 
-Offen: **Encoding** beider Banken (noch nicht geprüft), siehe § 4.
+Encoding (geprüft): **Volksbank = UTF-8 mit BOM**, **Comdirect = Windows-1252**
+(„ANSI“ im Windows-Editor).
 
 ---
 
@@ -18,6 +19,7 @@ Besonderheiten der Kartenumsätze (§ 1.3) ergänzen.
 
 ### 1.1 Aufbau
 
+- Encoding **UTF-8 mit BOM** – BOM vor dem Header-Abgleich entfernen.
 - Kopfzeile in **Zeile 1**, keine Metadatenzeilen davor.
 - Trennzeichen `;`, **kein Quoting** im Beispiel – trotzdem quote-aware
   parsen.
@@ -81,9 +83,8 @@ Besonderheiten der Kartenumsätze:
 - **Auslandseinsatzentgelt** steckt im Betrag: 14,99 + 0,26 = 15,25. Der
   Verwendungszweck nennt Originalbetrag und Gebühr.
 - **Echtes Umsatzdatum** im Verwendungszweck (`Umsatz vom 30.09.2026`),
-  abweichend von Buchungstag und Valuta. Für die Monatszuordnung von
-  Kartenumsätzen (§ 11 Zeitversatz) ist das das relevante Datum – prüfen,
-  ob es als `booking_date` verwendet werden soll.
+  abweichend von Buchungstag und Valuta. **Entschieden:** dieses Datum ist
+  `booking_date` (Monatszuordnung, § 11 Zeitversatz).
 - `Saldo nach Buchung` ist negativ = offener Kartenbetrag.
 - `IBAN Auftragskonto` ist eine eigene Kontonummer der Karte (Format wie
   IBAN).
@@ -101,6 +102,7 @@ Besonderheiten der Kartenumsätze:
 
 ### 2.1 Aufbau
 
+- Encoding **Windows-1252** (Umlaute im Text, z. B. `beschränkter`).
 - **Alle Felder in Anführungszeichen**, Trennzeichen `;`, **Semikolon am
   Zeilenende** (leere 6. Spalte).
 - Nur 5 Spalten, **keine eigene Spalte für Gegenpartei, Gegen-IBAN oder
@@ -128,6 +130,19 @@ Mapping:
 | Buchungstext | enthält **Gegenpartei, Verwendungszweck und Referenz** in einem Feld |
 | Umsatz in EUR | `amount_cents`, Währung immer EUR |
 
+Weitere Beispiele (synthetisch, Muster echt):
+
+```
+"01.10.2026";"30.09.2026";"Kontoführungsentgelt";" Buchungstext: Entgelt Visa-Kreditkarte Zeitraum: 01.09.2026 bis 30.09.2026 Ref. 0A0B0C0D0E0F0G0H/111111";"-1,90";
+"01.10.2026";"01.10.2026";"Entgelte";" Buchungstext: Kosten genutzte mobileTAN Vormonat 1 kostenpflichtige mobileTAN Ref. 0A0B0C0D0E0F0G0H/22222";"-0,09";
+"01.10.2026";"01.10.2026";"Lastschrift / Belastung";"Auftraggeber: B + V LEBENSVERSICHERUNG AKTIENGESELLSCHAFT Buchungstext: 00000000000 Leben / Mustermann, Max / 33.30 Folgeb. 01.10 Ref. 1A1B1C1D1E1F1G1H/33333";"-33,30";
+"01.10.2026";"01.10.2026";"Lastschrift / Belastung";"Auftraggeber: B+V Lebensversicherung AG Niederlassung Luxemburg Buchungstext: 0000000 Tarif Plus lfd. Btr OP00000000 01.10.2026 - 01. 11.2026 Ref. 2A2B2C2D2E2F2G2H/44444";"-100,00";
+"22.09.2026";"22.09.2026";"Lastschrift / Belastung";"Auftraggeber: Beispiel Lotterie Gesellschaft mit beschränkter Haftung Buchungstext: LOS 000000000000 fuer Oktober 2026 Ref. 3A3B3C3D3E3F3G3H/55555";"-10,00";
+```
+
+Gesehene `Vorgang`-Werte: `Lastschrift / Belastung`, `Kontoführungsentgelt`,
+`Entgelte`.
+
 ### 2.2 Buchungstext zerlegen
 
 Das Feld folgt dem Muster `<Label>: <Wert> <Label>: <Wert> …`. Bekannt:
@@ -135,6 +150,23 @@ Das Feld folgt dem Muster `<Label>: <Wert> <Label>: <Wert> …`. Bekannt:
 - `Auftraggeber:` → `counterparty` (bei Lastschriften/Eingängen)
 - `Buchungstext:` → `purpose`
 - `Ref.` → Referenz (nicht in `purpose`, nicht in den Hash-Text)
+- `Zeitraum:` → Teil des Verwendungszwecks (Abrechnungszeitraum)
+
+**Ohne `Auftraggeber:`** (Bankentgelte): Feld beginnt mit Leerzeichen und
+direkt `Buchungstext:`. Dann `counterparty` = Bank selbst (`comdirect`) bzw.
+leer + `Vorgang` als Hinweis – nicht als „unbekannt“ in der Auswertung
+verlieren.
+
+**Normalisierung – Testfälle aus echten Daten:** Derselbe Anbieter erscheint
+in mehreren Schreibweisen, die `counterparty_normalized` zusammenführen
+muss bzw. bewusst trennen darf:
+
+- `B+V …` und `B + V …` (Leerzeichen um Sonderzeichen) → gleich
+- Rechtsformen in Kurz- **und Langform**: `AG` / `Aktiengesellschaft`,
+  `GmbH` / `Gesellschaft mit beschränkter Haftung`
+- Zusätze wie `Niederlassung Luxemburg`
+- Groß-/Kleinschreibung gemischt
+- Datumsangaben mit Leerzeichen im Verwendungszweck (`01. 11.2026`)
 
 Vermutlich weitere Labels, noch nicht gesehen und **zu verifizieren**:
 `Empfänger:` (ausgehende Überweisung), `Kto/IBAN:`, `BLZ/BIC:`. Parser so
@@ -143,6 +175,9 @@ bauen, dass unbekannte Labels nicht verloren gehen (Rest landet in
 
 ### 2.3 Zu prüfen beim echten Export
 
+- Unbekannt, ob der Export Zeilen vor/nach der Tabelle hat. Der Parser
+  muss **beides** können (Header suchen, Fußzeilen ignorieren) und
+  dafür Tests mit beiden Varianten haben.
 - Stehen **Metadatenzeilen vor der Kopfzeile** (Kontoname, Zeitraum, neuer
   Kontostand) oder **Fußzeilen** (alter Kontostand)? Header suchen, nicht
   annehmen.
@@ -164,7 +199,9 @@ bauen, dass unbekannte Labels nicht verloren gehen (Rest landet in
 
 ## 4. Offene Fragen
 
-- [ ] Encoding Volksbank-Export (Editor → unten rechts)
-- [ ] Encoding Comdirect-Export
-- [ ] Comdirect: Zeilen vor/nach der Kopfzeile? Zeilen mit „offen“?
-- [ ] Visa: `Umsatz vom`-Datum als Buchungsdatum verwenden? (Empfehlung: ja)
+- [x] Encoding Volksbank: UTF-8 mit BOM
+- [x] Encoding Comdirect: Windows-1252
+- [ ] Comdirect: Zeilen vor/nach der Kopfzeile? Zeilen mit „offen“? –
+      Parser deckt beides ab, beim ersten echten Import verifizieren
+- [x] Visa: `Umsatz vom`-Datum ist `booking_date`, Valutadatum ist
+      `value_date`. Fehlt `Umsatz vom` im Text, Buchungstag verwenden.
