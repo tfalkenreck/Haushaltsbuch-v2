@@ -117,9 +117,17 @@ export function AccountsPage() {
                   <td className="iban">{account.iban ? formatIban(account.iban) : '–'}</td>
                   <td className="num">
                     {account.balanceCents === null ? (
-                      '–'
+                      account.transactionCount > 0 ? (
+                        <a href={hrefFor('deckung', { accountId: account.id })}>
+                          <small>Kontostand erfassen</small>
+                        </a>
+                      ) : (
+                        '–'
+                      )
                     ) : (
-                      <span title={`laut Import, Stand ${formatDate(account.balanceDate)}`}>
+                      <span
+                        title={`${account.balanceSource === 'manual' ? 'aus von Hand erfasstem Kontostand gerechnet' : 'laut Import'}, Stand ${formatDate(account.balanceDate)}`}
+                      >
                         {formatCents(account.balanceCents)}
                       </span>
                     )}

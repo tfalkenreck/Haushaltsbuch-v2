@@ -1,5 +1,6 @@
 import type { AccountRole } from '../api/accounts';
 import type { Bucket } from '../api/categories';
+import type { Interval } from '../api/funding';
 import type { PatternType, RuleField } from '../api/rules';
 import type { TransferKind } from '../api/transfers';
 
@@ -46,3 +47,17 @@ export const TRANSFER_KIND_LABELS: Record<TransferKind, string> = {
   one_sided: 'einseitig (vermutet)',
   card_settlement: 'Kartenabrechnung',
 };
+
+export const INTERVAL_LABELS: Record<Interval, string> = {
+  biweekly: '14-tägig',
+  monthly: 'monatlich',
+  quarterly: 'quartalsweise',
+  semiannual: 'halbjährlich',
+  annual: 'jährlich',
+};
+
+export const BALANCE_SOURCE_LABELS = {
+  bank: 'Saldo laut Bank',
+  import: 'Kontostand laut Datei',
+  manual: 'von Hand erfasster Kontostand',
+} as const;

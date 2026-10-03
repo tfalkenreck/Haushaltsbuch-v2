@@ -470,7 +470,7 @@ schwankende Schreibweise der Gegenpartei).
 | 2 | Import: Adapter-Interface, Volksbank OWL, Comdirect, Duplikaterkennung, Abdeckung, Rückgängig, Transaktionsliste | erledigt |
 | 3 | Kategorisierung: Kategorien, Regeln, manuelles Umkategorisieren, Lernen aus Korrekturen | erledigt |
 | 4 | Umbuchungen und Kreditkarte | erledigt |
-| 5 | Deckungsprüfung und Ausgaben am Ausgabenkonto vorbei | offen |
+| 5 | Deckungsprüfung und Ausgaben am Ausgabenkonto vorbei | erledigt |
 | 6 | Fixkosten/Abos manuell plus automatische Erkennung | offen |
 | 7 | Dashboard, Budget, Prognose, Sparziele | offen |
 | 8 | Export/Re-Import, Startskript, Feinschliff | offen |
@@ -597,7 +597,35 @@ Status nach Abschluss einer Phase hier aktualisieren.
 | Aufheben | „Aufheben“ in der Übersicht: alle Buchungen der Umbuchung → „keine Umbuchung“ (kommen nicht wieder). „Keine Umbuchung“ an einer Buchung: nur diese wird gesperrt; die Gegenbuchung einer automatischen Umbuchung wird frei, eine manuelle bleibt mit der übrigen Seite (Paar → einseitig) |
 | Rückgängig | Umbuchungen ohne Buchung verschwinden; automatische Paare mit nur noch einer Seite werden aufgelöst und die übrige Buchung neu erkannt; manuelle werden einseitig |
 
+**Korrektur Phase 4 nach dem Echtdaten-Test (3. Oktober 2026)**
+
+| Frage | Entscheidung |
+|-------|--------------|
+| Abrechnungszeitraum der Karte | Nennt der Ausgleich (oder die Abbuchung) „Abrechnung vom TT.MM.JJJJ“, umfasst der Zeitraum die Kartenumsätze nach **Buchungstag der Bank** (`bank_booking_date`, Altbestand: Kaufdatum) vom Tag nach der vorigen Abrechnung derselben Karte bis einschließlich dieses Datums. Ohne vorige Abrechnung (oder länger als 62 Tage zurück): frühester Buchungstag, ab dem die Summe genau passt, sonst Tag nach demselben Datum im Vormonat. Ohne Datum im Text: bisheriges Verfahren nach Kaufdatum. Die Kartenumsätze zählen in allen Auswertungen weiter mit dem Kaufdatum |
+| Kennzeichnung | `transfers.period_basis` (Migration 005): `bank_booking_date` bzw. `booking_date`; die Plausibilitätsprüfung und der Link in die Buchungsliste (`dateBasis=bank`) nutzen dasselbe Datum. Abrechnungen aus der Zeit davor (`NULL`) werden bei der nächsten Erkennung einmalig neu berechnet – auch bestätigte und von Hand angelegte |
+| Sammelbestätigung | „Alle Paare bestätigen, deren Gegen-IBAN ein eigenes Konto ist“: nur vorgeschlagene Paare, bei denen eine Seite die IBAN des **anderen beteiligten** Kontos als Gegen-IBAN nennt. Anzahl steht auf dem Knopf und in der Rückfrage |
+
+**Getroffen in Phase 5 (3. Oktober 2026)**
+
+| Frage | Entscheidung |
+|-------|--------------|
+| Welche Konten | Jedes Konto mit Rolle `ausgaben` (laut § 5 „per Dauerauftrag gespeist“); die API rechnet für jedes Konto. Kein Bezug auf Name oder Bank |
+| Dauerauftrag erkennen | Unter den Umbuchungen aufs Konto (Analyse, nichts wird gespeichert): eine Reihe setzt sich fort, wenn sie vom selben Konto kommt und höchstens 4 Tage vom Termin des Folgemonats (oder übernächsten, eine Ausführung darf fehlen) abweicht; ein Termin am 30., ausgeführt am 01., zählt zum Vormonat. Je Buchungstag gemeinsam zugeordnet: gleicher Betrag zuerst, sonst nächster Betrag = Betragsänderung. Mehrere gleiche Daueraufträge am selben Tag bleiben getrennt. Ab zwei Ausführungen Dauerauftrag; eine einzelne nur mit „Dauerauftrag“ im Text (vermutet). Beendet, wenn die nächste Ausführung bis zum Ende der Importe überfällig ist. Übrige Umbuchungen = Sonderüberweisungen |
+| Monatsrechnung | Nach Buchungsdatum. Zufluss = Umbuchungen der Daueraufträge; Abbuchungen = Abflüsse ohne Umbuchungen minus Gutschriften ohne Umbuchung (Erstattungen); Differenz = Daueraufträge − Abbuchungen. Sonderüberweisungen und Umbuchungen weg vom Konto stehen separat („weitere Umbuchungen“) und zählen nicht in die Differenz – sie überdecken eine Unterdeckung nur |
+| Verlauf | Nur vollständig importierte Monate, Fenster bis 12 Monate. Unterdeckungen in Folge bis zum letzten vollständigen Monat: 1–2 = Einzelfall, ab 3 = Trend; wächst/schrumpft = letzter gegen ersten Monat der Folge |
+| Empfehlung | Durchschnitt (nicht Median – Jahresbeiträge müssen mitfinanziert sein) der Abbuchungen im Fenster + Puffer (80.-Perzentil nach Nearest-Rank minus Durchschnitt) + umzustellende Posten aus § 13, aufgerundet auf volle 10 €; ab 3 vollständigen Monaten. Verglichen mit der Summe der laufenden Daueraufträge |
+| Ursachen | Abbuchungen je Posten (normalisierte Gegenpartei, sonst Gläubiger-ID, sonst Anfang des Verwendungszwecks), Durchschnitt je Monat der letzten 3 vollständigen gegen bis zu 6 davor; Anstieg ab 5 € gelistet, „neu“ wenn vorher nicht vorhanden. Preiserhöhung nur, wenn der alte Betrag mindestens zweimal in Folge gleich war. Gutschriften zählen hier nicht |
+| Kontostand | Anker = Tagesendstand aus „Saldo nach Buchung“ (Reihenfolge innerhalb eines Tages über die Saldo-Kette), Kontostand laut Datei, von Hand erfasster Stand (`balance_anchors`, Stand am Ende des Tages, ein Eintrag je Tag). Jedes Datum rechnet vom nächstgelegenen Anker über die Buchungen (Buchungstag der Bank) – nie über eine Importlücke hinweg. Ohne Import-Saldo zeigt die Kontenübersicht den daraus gerechneten Stand |
+| Saldoentwicklung | Konto im Minus / Polster; Reichweite = Guthaben ÷ durchschnittliche Unterdeckung der aktuellen Folge (abgerundet auf Monate) |
+| § 13 Kandidaten | Wiederkehrende Abbuchungen (ohne Umbuchungen und Bargeld) auf aktiven Konten mit Rolle `einnahmen`, je Vertrag (Posten-Schlüssel plus Mandatsreferenz). Intervall aus dem mittleren Abstand (14-tägig 12–16, monatlich 26–35, quartalsweise 84–98, halbjährlich 175–190, jährlich 350–380 Tage; eine ausgelassene Abbuchung erlaubt); monatlich ab 3, 14-tägig ab 4, sonst ab 2 Abbuchungen; Betrag bis ±50 % vom Median, eine Ausreißerin erlaubt. Bewusst schlicht, die volle Abo-Erkennung kommt in Phase 6 |
+| § 13 Entscheidung | `bypass_decisions` je Herkunftskonto und Vertrag: `move` (Ziel = Ausgabenkonto, automatisch bei genau einem) oder `keep`; zurücknehmbar. „Erhöhung“ = Summe der Monatsbeträge laufender `move`-Posten |
+| § 13 Kontowechsel | Bleibt die Abbuchung auf dem Einnahmenkonto über ihren Termin hinaus aus (Toleranz 5–31 Tage je Intervall) und erscheint dieselbe Gegenpartei danach auf einem Ausgabenkonto → „umgestellt“, zählt nicht mehr in die Erhöhung (sie steckt dann in den Abbuchungen). Ohne Gegenstück → „beendet“ |
+
 **Offene Punkte**
+
+- **Deckungsprüfung an echten Daten prüfen:** Erkennung der Daueraufträge
+  (Toleranz 4 Tage, Betragsänderung vs. neuer Dauerauftrag am selben Tag)
+  und die Kandidaten für § 13 sind nur synthetisch getestet.
 
 - **Umbuchungs-Erkennung an echten Daten prüfen:** Text der Visa-
   Sammelabbuchung auf dem Girokonto und des Ausgleichs auf dem
@@ -618,20 +646,22 @@ Status nach Abschluss einer Phase hier aktualisieren.
 
 **Erkenntnisse aus dem ersten Echtdaten-Test (3. Oktober 2026)**
 
-- **Kartenabrechnung passt nicht zur Summe (10 von 10 Abrechnungen):**
+- **Kartenabrechnung passt nicht zur Summe (10 von 10 Abrechnungen)** –
+  umgesetzt (siehe „Korrektur Phase 4 nach dem Echtdaten-Test“), an echten
+  Daten noch zu prüfen:
   Beispiel: Ausgleich 504,20 € mit Text „Abrechnung vom 18.09.2026“, die
   Erkennung wählte Kartenumsätze 27.08.–28.09. (Kaufdatum) mit Summe
   438,39 €. Wahrscheinliche Ursache: Der Abrechnungszeitraum der Bank
   endet am **Abrechnungsdatum aus dem Text** und richtet sich nach dem
   **Buchungstag der Bank** (`bank_booking_date`), nicht nach dem Kaufdatum.
   Ein Kauf am 17.09., gebucht am 19.09., gehört zur nächsten Abrechnung.
-- **Mehrere Daueraufträge aufs Ausgabenkonto:** Am 11. gehen mehrere
+- **Mehrere Daueraufträge aufs Ausgabenkonto** – umgesetzt in Phase 5: Am 11. gehen mehrere
   Überweisungen vom Einnahmen- aufs Ausgabenkonto (z. B. 10 €, 60 €,
   10 €, 100 €), dazu weitere an anderen Tagen. Die Deckungsprüfung (§ 12)
   muss **alle** Umbuchungen aufs Ausgabenkonto pro Monat summieren und
   die einzelnen Daueraufträge getrennt erkennen und anzeigen.
 - **Comdirect liefert keinen Saldo** (weder in Zeilen noch in
-  Metadaten). Für die Saldoentwicklung (§ 12.5) braucht es einen manuell
+  Metadaten) – umgesetzt in Phase 5. Für die Saldoentwicklung (§ 12.5) braucht es einen manuell
   erfassten Kontostand mit Datum; der Verlauf wird daraus über die
   Buchungen vor- und zurückgerechnet.
 

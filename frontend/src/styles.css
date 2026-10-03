@@ -345,3 +345,67 @@ table.data tr.transfer td.num:not(.muted) {
   max-height: 16rem;
   overflow-y: auto;
 }
+
+/* --- Deckungsprüfung (Phase 5) --------------------------------------------- */
+.deficit {
+  color: #cf222e;
+}
+
+.surplus {
+  color: #1a7f37;
+}
+
+.verdict p {
+  margin: 0.35rem 0;
+}
+
+.verdict-ok {
+  border-left: 4px solid #4ac26b;
+}
+
+.verdict-warn {
+  border-left: 4px solid #d4a72c;
+}
+
+.verdict-bad {
+  border-left: 4px solid #cf222e;
+}
+
+.recommendation {
+  border-top: 1px solid #d8dee4;
+  margin-top: 0.5rem;
+  padding-top: 0.25rem;
+}
+
+td.bar-cell {
+  width: 8rem;
+  vertical-align: middle;
+}
+
+.bar {
+  display: block;
+  height: 0.6rem;
+  border-radius: 2px;
+}
+
+.bar-deficit {
+  background: #ff8182;
+}
+
+.bar-surplus {
+  background: #4ac26b;
+}
+
+table.data tr.incomplete td {
+  background: #fffbea;
+}
+
+ul.plain {
+  list-style: none;
+  padding: 0;
+  margin: 0.25rem 0 1rem;
+}
+
+ul.plain li {
+  padding: 0.15rem 0;
+}

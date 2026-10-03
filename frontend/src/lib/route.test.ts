@@ -13,6 +13,7 @@ describe('parseHash', () => {
     expect(parseHash('#/kategorien').page).toBe('kategorien');
     expect(parseHash('#/regeln').page).toBe('regeln');
     expect(parseHash('#/umbuchungen?status=suggested').page).toBe('umbuchungen');
+    expect(parseHash('#/deckung?accountId=2').page).toBe('deckung');
     expect(parseHash('#/buchungen?uncategorized=1').params.get('uncategorized')).toBe('1');
   });
 

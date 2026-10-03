@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseCsv } from '../src/lib/csv.js';
-import { addDays, monthRange, parseGermanDate } from '../src/lib/date.js';
+import { addDays, addMonths, daysBetween, monthRange, parseGermanDate, shiftMonth } from '../src/lib/date.js';
 import { parseGermanAmount } from '../src/lib/money.js';
 import { normalizeCounterparty } from '../src/lib/normalize.js';
 import { decodeText } from '../src/lib/text.js';
@@ -49,6 +49,11 @@ describe('Datum', () => {
     expect(addDays('2026-12-31', 1)).toBe('2027-01-01');
     expect(addDays('2026-03-01', -1)).toBe('2026-02-28');
     expect(monthRange('2026-11-15', '2027-02-01')).toEqual(['2026-11', '2026-12', '2027-01', '2027-02']);
+    expect(shiftMonth('2026-01', -1)).toBe('2025-12');
+    expect(shiftMonth('2026-11', 14)).toBe('2028-01');
+    expect(addMonths('2026-03-31', -1)).toBe('2026-02-28');
+    expect(addMonths('2026-09-18', -1)).toBe('2026-08-18');
+    expect(daysBetween('2026-09-30', '2026-10-02')).toBe(2);
   });
 });
 

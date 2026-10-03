@@ -3,6 +3,7 @@ import type { Db } from '../db/connection.js';
 import { AppError } from '../lib/errors.js';
 import { isValidIban, normalizeIban } from '../lib/iban.js';
 import { nowIso } from '../lib/time.js';
+import { currentBalance, loadBalanceData } from './balances.js';
 
 export const ACCOUNT_ROLES = ['einnahmen', 'ausgaben', 'sparen', 'kreditkarte'] as const;
 export type AccountRole = (typeof ACCOUNT_ROLES)[number];
@@ -16,9 +17,13 @@ export interface Account {
   active: boolean;
   createdAt: string;
   updatedAt: string;
-  /** Kontostand laut jüngstem Import, der einen nennt. */
+  /**
+   * Kontostand laut jüngstem Import, der einen nennt; ohne solchen Import
+   * aus einem von Hand erfassten Kontostand über die Buchungen gerechnet.
+   */
   balanceCents: number | null;
   balanceDate: string | null;
+  balanceSource: 'import' | 'manual' | null;
   /** Von Importen abgedeckter Zeitraum (frühester Beginn bis spätestes Ende). */
   coverageStart: string | null;
   coverageEnd: string | null;
@@ -87,6 +92,7 @@ function toAccount(row: AccountRow): Account {
     updatedAt: row.updated_at,
     balanceCents: row.balance_cents,
     balanceDate: row.balance_date,
+    balanceSource: row.balance_cents === null ? null : 'import',
     coverageStart: row.coverage_start,
     coverageEnd: row.coverage_end,
     transactionCount: row.transaction_count,
@@ -132,17 +138,26 @@ function assertIbanFree(db: Db, iban: string | null, ownId?: number): void {
   }
 }
 
+/** Konten ohne Saldo im Export (Comdirect): Kontostand aus dem von Hand erfassten Stand. */
+function withManualBalance(db: Db, account: Account): Account {
+  if (account.balanceCents !== null) return account;
+  const hasManual = db.prepare('SELECT 1 FROM balance_anchors WHERE account_id = ?').get(account.id);
+  if (!hasManual) return account;
+  const current = currentBalance(loadBalanceData(db, account.id));
+  return current ? { ...account, balanceCents: current.balanceCents, balanceDate: current.date, balanceSource: 'manual' } : account;
+}
+
 export function listAccounts(db: Db): Account[] {
   const rows = db
     .prepare(`${ACCOUNT_SELECT} ORDER BY a.active DESC, a.name COLLATE NOCASE, a.id`)
     .all() as AccountRow[];
-  return rows.map(toAccount);
+  return rows.map((row) => withManualBalance(db, toAccount(row)));
 }
 
 export function getAccount(db: Db, id: number): Account {
   const row = db.prepare(`${ACCOUNT_SELECT} WHERE a.id = ?`).get(id) as AccountRow | undefined;
   if (!row) throw new AppError(`Konto ${id} existiert nicht.`, 404);
-  return toAccount(row);
+  return withManualBalance(db, toAccount(row));
 }
 
 export function createAccount(db: Db, input: AccountInput): Account {

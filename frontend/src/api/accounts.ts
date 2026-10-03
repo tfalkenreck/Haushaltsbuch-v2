@@ -13,6 +13,8 @@ export interface Account {
   updatedAt: string;
   balanceCents: number | null;
   balanceDate: string | null;
+  /** import = laut Datei, manual = aus einem von Hand erfassten Kontostand gerechnet. */
+  balanceSource: 'import' | 'manual' | null;
   coverageStart: string | null;
   coverageEnd: string | null;
   transactionCount: number;
