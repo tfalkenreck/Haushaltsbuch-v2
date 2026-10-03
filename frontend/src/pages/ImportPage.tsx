@@ -171,6 +171,17 @@ export function ImportPage({ params }: Props) {
         </div>
       )}
 
+      {batches.some((b) => b.needsReimport) && (
+        <div className="panel notice warnings">
+          <p>
+            <strong>Bitte neu importieren:</strong> Die markierten Importe stammen aus einer Version, die bei
+            Kartenumsätzen nur das Kaufdatum gespeichert hat, nicht den Buchungstag der Bank. Exportzeitraum und
+            Abdeckung können dadurch falsch sein (z. B. ein Monat „teilweise“, der nie exportiert wurde).
+          </p>
+          <p>Jeden markierten Import einmal rückgängig machen und dieselbe Datei erneut importieren.</p>
+        </div>
+      )}
+
       {coverage && account && (
         <>
           <h3>Abdeckung – {account.name}</h3>
@@ -203,6 +214,7 @@ export function ImportPage({ params }: Props) {
                     <td>{formatTimestamp(b.importedAt)}</td>
                     <td>
                       <a href={hrefFor('buchungen', { accountId: b.accountId, importBatchId: b.id })}>{b.fileName}</a>
+                      {b.needsReimport && <small className="warnings block">bitte neu importieren</small>}
                     </td>
                     <td>
                       {formatDate(b.periodStart)} – {formatDate(b.periodEnd)}

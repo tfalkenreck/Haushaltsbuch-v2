@@ -101,6 +101,7 @@ function parseRow(row: CsvRow, columns: Map<string, number>, ignored: SkippedLin
     raw: {
       line: row.line,
       bookingDate,
+      bankBookingDate: bookingDay,
       valueDate: parseGermanDate(get(COL.valueDate)),
       amountCents,
       currency: /^[A-Z]{3}$/.test(currency) ? currency : 'EUR',

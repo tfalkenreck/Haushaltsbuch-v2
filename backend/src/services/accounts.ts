@@ -23,6 +23,8 @@ export interface Account {
   coverageStart: string | null;
   coverageEnd: string | null;
   transactionCount: number;
+  /** Importe mit Kartenumsätzen ohne Buchungstag der Bank (vor Migration 004). */
+  needsReimport: boolean;
 }
 
 export interface AccountInput {
@@ -54,6 +56,7 @@ interface AccountRow {
   coverage_start: string | null;
   coverage_end: string | null;
   transaction_count: number;
+  needs_reimport: number;
 }
 
 /** Konto plus Kennzahlen für die Übersicht (Saldo, Abdeckung, Anzahl Buchungen). */
@@ -62,7 +65,9 @@ const ACCOUNT_SELECT = `
          lb.balance_cents, lb.balance_date,
          (SELECT min(period_start) FROM import_batches b WHERE b.account_id = a.id) AS coverage_start,
          (SELECT max(period_end) FROM import_batches b WHERE b.account_id = a.id) AS coverage_end,
-         (SELECT count(*) FROM transactions t WHERE t.account_id = a.id) AS transaction_count
+         (SELECT count(*) FROM transactions t WHERE t.account_id = a.id) AS transaction_count,
+         EXISTS (SELECT 1 FROM transactions t
+                  WHERE t.account_id = a.id AND t.bank_booking_date IS NULL) AS needs_reimport
     FROM accounts a
     LEFT JOIN import_batches lb ON lb.id = (
       SELECT b.id FROM import_batches b
@@ -85,6 +90,7 @@ function toAccount(row: AccountRow): Account {
     coverageStart: row.coverage_start,
     coverageEnd: row.coverage_end,
     transactionCount: row.transaction_count,
+    needsReimport: row.needs_reimport === 1,
   };
 }
 

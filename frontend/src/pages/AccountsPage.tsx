@@ -135,6 +135,11 @@ export function AccountsPage() {
                         <small className="block">{account.transactionCount} Buchungen</small>
                       </a>
                     )}
+                    {account.needsReimport && (
+                      <a className="warnings block" href={hrefFor('import', { accountId: account.id })}>
+                        <small>Kartenumsätze bitte neu importieren</small>
+                      </a>
+                    )}
                   </td>
                   <td>{account.active ? 'aktiv' : 'deaktiviert'}</td>
                   <td className="row-actions">

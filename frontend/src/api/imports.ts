@@ -37,6 +37,7 @@ export interface ImportBatch {
   balanceCents: number | null;
   balanceDate: string | null;
   transactionCount: number;
+  needsReimport: boolean;
 }
 
 export interface UndoResult {

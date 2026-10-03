@@ -178,6 +178,7 @@ function parse(bytes: Uint8Array): ParseResult {
     transactions.push({
       line: row.line,
       bookingDate,
+      bankBookingDate: bookingDate,
       valueDate: parseGermanDate(get(COL.valueDate)),
       amountCents,
       currency: 'EUR',

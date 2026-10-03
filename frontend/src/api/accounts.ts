@@ -16,6 +16,8 @@ export interface Account {
   coverageStart: string | null;
   coverageEnd: string | null;
   transactionCount: number;
+  /** Importe mit Kartenumsätzen ohne Buchungstag der Bank – neu importieren. */
+  needsReimport: boolean;
 }
 
 export interface BankAdapter {

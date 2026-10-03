@@ -57,6 +57,12 @@ export interface ImportBatch {
   balanceDate: string | null;
   /** Buchungen, die aktuell zu diesem Importvorgang gehören. */
   transactionCount: number;
+  /**
+   * Import aus der Zeit vor Migration 004: Kartenumsätze ohne Buchungstag
+   * der Bank. Zeitraum und Abdeckung können falsch sein – einmal
+   * rückgängig machen und neu importieren.
+   */
+  needsReimport: boolean;
 }
 
 /**
@@ -229,14 +235,21 @@ export function importFile(db: Db, input: ImportInput): ImportResult {
     throw new AppError('Die Datei enthält keine Buchungen.');
   }
 
-  const dates = kept.map((t) => t.bookingDate).sort();
+  // Zeitraum und Abdeckung richten sich nach dem Buchungstag der Bank –
+  // danach filtert sie ihren Export. Ein Kartenkauf vom 29.12. in einem
+  // Export ab 01.01. gehört zum Januar-Export.
+  const dates = kept.map((t) => t.bankBookingDate).sort();
   const firstDate = dates[0] as string;
   const lastDate = dates[dates.length - 1] as string;
   if (requestedStart && requestedStart > firstDate) {
-    throw new AppError(`Der angegebene Zeitraum beginnt nach der ersten Buchung der Datei (${formatDateDe(firstDate)}).`);
+    throw new AppError(
+      `Der angegebene Zeitraum beginnt nach der ersten Buchung der Datei (Buchungstag ${formatDateDe(firstDate)}).`,
+    );
   }
   if (requestedEnd && requestedEnd < lastDate) {
-    throw new AppError(`Der angegebene Zeitraum endet vor der letzten Buchung der Datei (${formatDateDe(lastDate)}).`);
+    throw new AppError(
+      `Der angegebene Zeitraum endet vor der letzten Buchung der Datei (Buchungstag ${formatDateDe(lastDate)}).`,
+    );
   }
   const period: Period = { start: requestedStart ?? firstDate, end: requestedEnd ?? lastDate };
 
@@ -312,15 +325,16 @@ export function importFile(db: Db, input: ImportInput): ImportResult {
 
     const insert = db.prepare(
       `INSERT INTO transactions
-         (account_id, booking_date, value_date, amount_cents, currency, counterparty, counterparty_normalized,
+         (account_id, booking_date, bank_booking_date, value_date, amount_cents, currency, counterparty, counterparty_normalized,
           counterparty_iban, purpose, booking_text, creditor_id, mandate_reference, balance_after_cents,
           bank_reference, import_batch_id, import_hash, imported_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const { t, hash } of fresh) {
       insert.run(
         account.id,
         t.bookingDate,
+        t.bankBookingDate,
         t.valueDate,
         t.amountCents,
         t.currency,
@@ -360,6 +374,7 @@ interface BatchRow {
   balance_cents: number | null;
   balance_date: string | null;
   transaction_count: number;
+  needs_reimport: number;
 }
 
 function toBatch(row: BatchRow): ImportBatch {
@@ -379,12 +394,15 @@ function toBatch(row: BatchRow): ImportBatch {
     balanceCents: row.balance_cents,
     balanceDate: row.balance_date,
     transactionCount: row.transaction_count,
+    needsReimport: row.needs_reimport === 1,
   };
 }
 
 const BATCH_SELECT = `
   SELECT b.*, a.name AS account_name,
-         (SELECT count(*) FROM transactions t WHERE t.import_batch_id = b.id) AS transaction_count
+         (SELECT count(*) FROM transactions t WHERE t.import_batch_id = b.id) AS transaction_count,
+         EXISTS (SELECT 1 FROM transactions t
+                  WHERE t.import_batch_id = b.id AND t.bank_booking_date IS NULL) AS needs_reimport
     FROM import_batches b
     JOIN accounts a ON a.id = b.account_id`;
 

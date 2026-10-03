@@ -102,7 +102,7 @@ describe('Import-API', () => {
     expect(account).toMatchObject({
       balanceCents: -13735,
       balanceDate: '2026-10-02',
-      coverageStart: '2026-09-28',
+      coverageStart: '2026-09-29', // Buchungstag der Bank, nicht Kaufdatum 28.09.
       coverageEnd: '2026-10-02',
       transactionCount: 4,
     });

@@ -9,8 +9,16 @@
 export interface RawTransaction {
   /** Zeile in der Datei (1-basiert), für Meldungen. */
   line: number;
-  /** YYYY-MM-DD */
+  /**
+   * YYYY-MM-DD – Datum für alle Auswertungen. Bei Kartenumsätzen das
+   * Kaufdatum („Umsatz vom …“), sonst der Buchungstag der Bank.
+   */
   bookingDate: string;
+  /**
+   * YYYY-MM-DD – Buchungstag laut Bank. Danach filtert die Bank ihren
+   * Export; Grundlage für Exportzeitraum und Abdeckung.
+   */
+  bankBookingDate: string;
   /** YYYY-MM-DD */
   valueDate: string | null;
   /** Cent, < 0 = Abfluss. */

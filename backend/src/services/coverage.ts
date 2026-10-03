@@ -96,7 +96,10 @@ export function getCoverage(db: Db, accountId: number, today: string): AccountCo
     (
       db
         .prepare(
-          `SELECT substr(booking_date, 1, 7) AS month, count(*) AS n FROM transactions
+          // Buchungstag der Bank: ein Kartenkauf vom 29.12., gebucht am
+          // 02.01., gehört zum Januar-Export. Altbestand ohne Buchungstag
+          // (Migration 004) fällt auf booking_date zurück.
+          `SELECT substr(coalesce(bank_booking_date, booking_date), 1, 7) AS month, count(*) AS n FROM transactions
             WHERE account_id = ? GROUP BY month`,
         )
         .all(accountId) as { month: string; n: number }[]

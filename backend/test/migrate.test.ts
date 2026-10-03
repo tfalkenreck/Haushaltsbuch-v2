@@ -26,12 +26,18 @@ describe('Migrationsrunner', () => {
     const db = openDatabase(':memory:');
     const { applied } = migrate(db);
 
-    expect(applied).toEqual(['001_initial.sql', '002_seed_categories.sql', '003_import_details.sql']);
+    expect(applied).toEqual([
+      '001_initial.sql',
+      '002_seed_categories.sql',
+      '003_import_details.sql',
+      '004_bank_booking_date.sql',
+    ]);
     const rows = db.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all();
     expect(rows).toEqual([
       { version: 1, name: '001_initial.sql' },
       { version: 2, name: '002_seed_categories.sql' },
       { version: 3, name: '003_import_details.sql' },
+      { version: 4, name: '004_bank_booking_date.sql' },
     ]);
   });
 
@@ -139,5 +145,29 @@ describe('Migration 003', () => {
         'bank_reference:TEXT',
       ]),
     );
+  });
+});
+
+describe('Migration 004', () => {
+  it('übernimmt den Buchungstag im Bestand, außer bei Kartenumsätzen', () => {
+    const db = openDatabase(':memory:');
+    const all = loadMigrations();
+    migrate(db, all.slice(0, 3));
+    const now = '2026-10-03T12:00:00.000Z';
+    const accountId = db
+      .prepare(`INSERT INTO accounts (name, role, bank_adapter, created_at, updated_at) VALUES ('Visa', 'kreditkarte', 'volksbank-owl', ?, ?)`)
+      .run(now, now).lastInsertRowid;
+    const insert = db.prepare(
+      `INSERT INTO transactions (account_id, booking_date, amount_cents, purpose, import_hash, imported_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    insert.run(accountId, '2026-09-30', -1525, 'PAYPAL *X  Umsatz vom 30.09.2026', 'a', now);
+    insert.run(accountId, '2026-10-01', -3000, 'JAHRESGEBUEHR VISA', 'b', now);
+
+    migrate(db, all);
+    expect(db.prepare('SELECT amount_cents, bank_booking_date FROM transactions ORDER BY id').all()).toEqual([
+      { amount_cents: -1525, bank_booking_date: null },
+      { amount_cents: -3000, bank_booking_date: '2026-10-01' },
+    ]);
   });
 });

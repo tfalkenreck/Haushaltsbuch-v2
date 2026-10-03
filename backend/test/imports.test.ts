@@ -35,7 +35,7 @@ describe('importHash', () => {
   });
 
   it('zählt nur identische Zeilen hoch', () => {
-    const base = { line: 1, valueDate: null, currency: 'EUR', counterparty: '', counterpartyIban: null, bookingText: '',
+    const base = { line: 1, bankBookingDate: '2026-09-15', valueDate: null, currency: 'EUR', counterparty: '', counterpartyIban: null, bookingText: '',
       creditorId: null, mandateReference: null, balanceAfterCents: null, bankReference: null, accountIban: null };
     const hashes = importHashes(1, [
       { ...base, bookingDate: '2026-09-15', amountCents: -320, purpose: 'X' },
@@ -140,6 +140,72 @@ describe('Import Volksbank', () => {
       counterparty_normalized: 'paypal streamingdienst',
     });
     expect(getAccount(db, id).balanceCents).toBe(-13735);
+  });
+});
+
+describe('Kartenumsätze: Kaufdatum und Buchungstag der Bank', () => {
+  it('prüft den Exportzeitraum gegen den Buchungstag, nicht gegen das Kaufdatum', () => {
+    const id = account('volksbank-owl', IBAN.volksbankVisa, 'kreditkarte');
+    // Kauf vom 29.12.2026, gebucht am 02.01.2027 – Export ab 01.01.2027.
+    const result = run(id, 'volksbank-owl/visa-jahreswechsel.csv', { periodStart: '2027-01-01', periodEnd: '2027-01-31' });
+    expect(result).toMatchObject({ imported: 2, periodStart: '2027-01-01', periodEnd: '2027-01-31' });
+
+    const row = db.prepare('SELECT booking_date, bank_booking_date FROM transactions WHERE amount_cents = -5000').get();
+    expect(row).toEqual({ booking_date: '2026-12-29', bank_booking_date: '2027-01-02' });
+  });
+
+  it('weist den Zeitraum weiterhin zurück, wenn ein Buchungstag außerhalb liegt', () => {
+    const id = account('volksbank-owl', IBAN.volksbankVisa, 'kreditkarte');
+    expect(() => run(id, 'volksbank-owl/visa-jahreswechsel.csv', { periodStart: '2027-01-03' })).toThrow(
+      /beginnt nach der ersten Buchung der Datei \(Buchungstag 02\.01\.2027\)/,
+    );
+  });
+
+  it('leitet den Zeitraum ohne Angabe aus den Buchungstagen ab', () => {
+    const id = account('volksbank-owl', IBAN.volksbankVisa, 'kreditkarte');
+    const result = run(id, 'volksbank-owl/visa-jahreswechsel.csv');
+    expect(result).toMatchObject({ periodStart: '2027-01-02', periodEnd: '2027-01-15' });
+  });
+
+  it('zeigt in der Abdeckung keinen Monat, der nie exportiert wurde', () => {
+    const id = account('volksbank-owl', IBAN.volksbankVisa, 'kreditkarte');
+    run(id, 'volksbank-owl/visa-jahreswechsel.csv', { periodStart: '2027-01-01', periodEnd: '2027-01-31' });
+    const coverage = getCoverage(db, id, '2027-01-31');
+    expect(coverage.months).toEqual([{ month: '2027-01', status: 'complete', transactionCount: 2 }]);
+  });
+
+  it('wertet weiter nach Kaufdatum aus', () => {
+    const id = account('volksbank-owl', IBAN.volksbankVisa, 'kreditkarte');
+    run(id, 'volksbank-owl/visa-jahreswechsel.csv');
+    const december = listTransactions(db, { from: '2026-12-01', to: '2026-12-31' });
+    expect(december.items.map((t) => t.amountCents)).toEqual([-5000]);
+    expect(december.items[0]?.bookingDate).toBe('2026-12-29');
+  });
+
+  it('übernimmt bei Girobuchungen den Buchungstag unverändert', () => {
+    const id = account('volksbank-owl', IBAN.volksbankGiro);
+    run(id, 'volksbank-owl/giro.csv');
+    const differing = db.prepare('SELECT count(*) AS n FROM transactions WHERE bank_booking_date IS NOT booking_date').get();
+    expect(differing).toEqual({ n: 0 });
+  });
+
+  it('markiert Importe ohne Buchungstag der Bank (Altbestand) zum Neuimport', () => {
+    const id = account('volksbank-owl', IBAN.volksbankVisa, 'kreditkarte');
+    const giro = account('volksbank-owl', IBAN.volksbankGiro, 'einnahmen', 'Giro');
+    run(id, 'volksbank-owl/visa.csv');
+    run(giro, 'volksbank-owl/giro.csv');
+    expect(listImportBatches(db, id)[0]?.needsReimport).toBe(false);
+
+    db.prepare("UPDATE transactions SET bank_booking_date = NULL WHERE purpose LIKE '%Umsatz vom%'").run();
+    expect(listImportBatches(db, id)[0]?.needsReimport).toBe(true);
+    expect(getAccount(db, id).needsReimport).toBe(true);
+    expect(listImportBatches(db, giro)[0]?.needsReimport).toBe(false);
+    expect(getAccount(db, giro).needsReimport).toBe(false);
+
+    // Rückgängig und neu importieren behebt es.
+    undoImport(db, listImportBatches(db, id)[0]?.id as number);
+    run(id, 'volksbank-owl/visa.csv');
+    expect(getAccount(db, id).needsReimport).toBe(false);
   });
 });
 
