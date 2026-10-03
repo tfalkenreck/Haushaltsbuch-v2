@@ -1,0 +1,7 @@
+"Buchungstag";"Wertstellung (Valuta)";"Vorgang";"Buchungstext";"Umsatz in EUR";
+"02.10.2026";"02.10.2026";"Lastschrift / Belastung";"Auftraggeber: Beispiel Versicherung Aktiengesellschaft Buchungstext: BEITRAG 00/000000000 10/26 Ref. 0A0B0C0D0E0F0G0H/0000";"-27,88";
+"01.10.2026";"30.09.2026";"Kontoführungsentgelt";" Buchungstext: Entgelt Visa-Kreditkarte Zeitraum: 01.09.2026 bis 30.09.2026 Ref. 0A0B0C0D0E0F0G0H/111111";"-1,90";
+"01.10.2026";"01.10.2026";"Entgelte";" Buchungstext: Kosten genutzte mobileTAN Vormonat 1 kostenpflichtige mobileTAN Ref. 0A0B0C0D0E0F0G0H/22222";"-0,09";
+"01.10.2026";"01.10.2026";"Lastschrift / Belastung";"Auftraggeber: B + V LEBENSVERSICHERUNG AKTIENGESELLSCHAFT Buchungstext: 00000000000 Leben / Mustermann, Max / 33.30 Folgeb. 01.10 Ref. 1A1B1C1D1E1F1G1H/33333";"-33,30";
+"01.10.2026";"01.10.2026";"Lastschrift / Belastung";"Auftraggeber: B+V Lebensversicherung AG Niederlassung Luxemburg Buchungstext: 0000000 Tarif Plus lfd. Btr OP00000000 01.10.2026 - 01. 11.2026 Ref. 2A2B2C2D2E2F2G2H/44444";"-100,00";
+"22.09.2026";"22.09.2026";"Lastschrift / Belastung";"Auftraggeber: Beispiel Lotterie Gesellschaft mit beschränkter Haftung Buchungstext: LOS 000000000000 fuer Oktober 2026 Ref. 3A3B3C3D3E3F3G3H/55555";"-10,00";

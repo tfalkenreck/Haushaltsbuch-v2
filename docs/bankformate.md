@@ -14,8 +14,9 @@ Encoding (geprüft): **Volksbank = UTF-8 mit BOM**, **Comdirect = Windows-1252**
 ## 1. Volksbank OWL – Girokonto, Sparkonto **und Visa**
 
 Girokonto und Visa-Kreditkarte exportieren **dasselbe Format**. Ein Adapter
-reicht; `volksbank-visa` kann denselben Parser nutzen und nur die
-Besonderheiten der Kartenumsätze (§ 1.3) ergänzen.
+(`volksbank-owl`) liest alle drei Kontoarten; die Besonderheiten der
+Kartenumsätze (§ 1.3) erkennt er am Inhalt der Zeile (leerer
+„Name Zahlungsbeteiligter“), nicht am Konto.
 
 ### 1.1 Aufbau
 

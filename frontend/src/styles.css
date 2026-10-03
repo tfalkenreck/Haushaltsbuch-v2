@@ -6,7 +6,7 @@
 }
 
 main {
-  max-width: 1000px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 1.5rem;
 }
@@ -75,4 +75,156 @@ td.iban {
 
 .error {
   color: #cf222e;
+}
+
+/* --- Navigation --------------------------------------------------------- */
+.app-header {
+  display: flex;
+  align-items: baseline;
+  gap: 2rem;
+  flex-wrap: wrap;
+}
+
+.app-header nav a {
+  margin-right: 1rem;
+  color: #0969da;
+  text-decoration: none;
+}
+
+.app-header nav a.active {
+  font-weight: 600;
+  color: #1f2328;
+  border-bottom: 2px solid #0969da;
+}
+
+/* --- Panels & Formulare --------------------------------------------------- */
+.panel {
+  background: #fff;
+  border: 1px solid #d8dee4;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.import-form,
+.filter-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.import-form label,
+.filter-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.import-form .hint,
+.filter-form .hint {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.notice p,
+.import-result p {
+  margin: 0.25rem 0;
+}
+
+.warnings {
+  color: #9a6700;
+  margin: 0.5rem 0;
+}
+
+/* --- Tabellen -------------------------------------------------------------- */
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+table.data th,
+table.data td {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid #d8dee4;
+  vertical-align: top;
+}
+
+th.num,
+td.num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+td.purpose {
+  white-space: pre-line;
+  word-break: break-word;
+  max-width: 28rem;
+  color: #57606a;
+}
+
+.amount-in {
+  color: #1a7f37;
+}
+
+.amount-out {
+  color: #1f2328;
+}
+
+.muted {
+  color: #8c959f;
+}
+
+.block {
+  display: block;
+}
+
+.summary {
+  margin: 0.5rem 0;
+}
+
+.pager {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+/* --- Abdeckung ------------------------------------------------------------- */
+ol.coverage {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+ol.coverage li {
+  padding: 0.25rem 0.5rem;
+  border-radius: 3px;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.85rem;
+  min-width: 5.5rem;
+}
+
+.coverage-complete {
+  background: #dafbe1;
+}
+
+.coverage-partial {
+  background: #fff8c5;
+}
+
+.coverage-missing {
+  background: #ffebe9;
+}
+
+.nowrap {
+  white-space: nowrap;
 }

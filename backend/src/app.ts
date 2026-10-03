@@ -2,6 +2,8 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Db } from './db/connection.js';
 import { AppError } from './lib/errors.js';
 import { accountRoutes } from './routes/accounts.js';
+import { importRoutes } from './routes/imports.js';
+import { transactionRoutes } from './routes/transactions.js';
 
 export interface AppOptions {
   /** Geöffnete und migrierte Datenbank (Tests: ':memory:'). */
@@ -31,6 +33,8 @@ export function buildApp(options: AppOptions): FastifyInstance {
   app.get('/api/health', async () => ({ status: 'ok' }));
 
   accountRoutes(app, options.db);
+  importRoutes(app, options.db);
+  transactionRoutes(app, options.db);
 
   return app;
 }

@@ -28,7 +28,7 @@ async function patch(id: number, body: Record<string, unknown>) {
 describe('Konten-API', () => {
   it('liefert die wählbaren Adapter und Rollen', async () => {
     const adapters = await app.inject({ method: 'GET', url: '/api/bank-adapters' });
-    expect(adapters.json().map((a: { id: string }) => a.id)).toEqual(['volksbank-owl', 'volksbank-visa', 'comdirect']);
+    expect(adapters.json().map((a: { id: string }) => a.id)).toEqual(['volksbank-owl', 'comdirect']);
 
     const roles = await app.inject({ method: 'GET', url: '/api/account-roles' });
     expect(roles.json()).toEqual(['einnahmen', 'ausgaben', 'sparen', 'kreditkarte']);
@@ -118,7 +118,7 @@ describe('Konten-API', () => {
   });
 
   it('deaktiviert und reaktiviert statt zu löschen', async () => {
-    const { id } = (await create({ name: 'Visa', role: 'kreditkarte', bankAdapter: 'volksbank-visa' })).json();
+    const { id } = (await create({ name: 'Visa', role: 'kreditkarte', bankAdapter: 'volksbank-owl' })).json();
 
     expect((await patch(id, { active: false })).json().active).toBe(false);
     expect((await app.inject({ method: 'GET', url: `/api/accounts/${id}` })).json().active).toBe(false);

@@ -26,11 +26,12 @@ describe('Migrationsrunner', () => {
     const db = openDatabase(':memory:');
     const { applied } = migrate(db);
 
-    expect(applied).toEqual(['001_initial.sql', '002_seed_categories.sql']);
+    expect(applied).toEqual(['001_initial.sql', '002_seed_categories.sql', '003_import_details.sql']);
     const rows = db.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all();
     expect(rows).toEqual([
       { version: 1, name: '001_initial.sql' },
       { version: 2, name: '002_seed_categories.sql' },
+      { version: 3, name: '003_import_details.sql' },
     ]);
   });
 
@@ -105,5 +106,38 @@ describe('Migrationsrunner', () => {
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     db.close();
+  });
+});
+
+describe('Migration 003', () => {
+  it('stellt Konten mit dem früheren Adapter volksbank-visa auf volksbank-owl um', () => {
+    const db = openDatabase(':memory:');
+    const all = loadMigrations();
+    migrate(db, all.slice(0, 2));
+    const now = '2026-10-03T12:00:00.000Z';
+    db.prepare(
+      `INSERT INTO accounts (name, role, bank_adapter, created_at, updated_at) VALUES ('Visa', 'kreditkarte', 'volksbank-visa', ?, ?)`,
+    ).run(now, now);
+
+    migrate(db, all);
+    expect(db.prepare('SELECT bank_adapter FROM accounts').get()).toEqual({ bank_adapter: 'volksbank-owl' });
+  });
+
+  it('ergänzt Gläubiger-ID, Mandatsreferenz und Saldo als eigene Spalten', () => {
+    const db = openDatabase(':memory:');
+    migrate(db);
+    const columns = (db.prepare('PRAGMA table_info(transactions)').all() as { name: string; type: string }[]).map(
+      (c) => `${c.name}:${c.type}`,
+    );
+    expect(columns).toEqual(
+      expect.arrayContaining([
+        'creditor_id:TEXT',
+        'mandate_reference:TEXT',
+        'counterparty_iban:TEXT',
+        'balance_after_cents:INTEGER',
+        'booking_text:TEXT',
+        'bank_reference:TEXT',
+      ]),
+    );
   });
 });

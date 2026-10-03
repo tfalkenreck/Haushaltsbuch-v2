@@ -7,9 +7,10 @@ Dauerauftrag aufs Ausgabenkonto noch reicht.
 Alle Daten bleiben auf dem eigenen Rechner – keine Cloud, keine Telemetrie.
 Die vollständige Spezifikation steht in [`CLAUDE.md`](CLAUDE.md).
 
-> **Stand:** Phase 1 – Datenmodell, Migrationen und Kontenverwaltung
-> (anlegen, umbenennen, Rolle und Bank-Adapter wählen, deaktivieren).
-> Import folgt in Phase 2.
+> **Stand:** Phase 2 – Kontenverwaltung und CSV-Import (Volksbank OWL
+> Giro/Spar/Visa, Comdirect) mit Duplikaterkennung, Abdeckung pro Konto,
+> Rückgängig je Importvorgang und Buchungsliste. Kategorisierung folgt in
+> Phase 3.
 
 ---
 
