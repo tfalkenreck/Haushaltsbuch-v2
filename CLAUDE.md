@@ -462,7 +462,7 @@ schwankende Schreibweise der Gegenpartei).
 | Phase | Inhalt | Status |
 |-------|--------|--------|
 | 0 | Spezifikation (diese Datei) und Projektgerüst | erledigt |
-| 1 | Datenmodell (Migration 001), Migrationsrunner, Konten mit Rolle und wählbarem Adapter | offen |
+| 1 | Datenmodell (Migration 001), Migrationsrunner, Konten mit Rolle und wählbarem Adapter | erledigt |
 | 2 | Import: Adapter-Interface, Volksbank OWL, Comdirect, Duplikaterkennung, Abdeckung, Rückgängig, Transaktionsliste | offen |
 | 3 | Kategorisierung: Kategorien, Regeln, manuelles Umkategorisieren, Lernen aus Korrekturen | offen |
 | 4 | Umbuchungen und Kreditkarte | offen |
@@ -513,6 +513,20 @@ Status nach Abschluss einer Phase hier aktualisieren.
 | Banking-API | außerhalb des Umfangs, CSV-Import reicht |
 | Vitest-Advisory GHSA-82fw-gwwq-j7x9 | erledigt: Vitest 5.0.3 (Beginn Phase 1) |
 
+**Getroffen in Phase 1 (3. Oktober 2026)**
+
+| Frage | Entscheidung |
+|-------|--------------|
+| Typsicherheit in SQLite | Alle Tabellen `STRICT`: ein `REAL` in einer Cent-Spalte wird von der DB abgelehnt. Datumsspalten per `CHECK … GLOB` auf `YYYY-MM-DD` |
+| Kategorien-Seed | Eigene Migration `002_seed_categories.sql`, läuft genau einmal; danach gehören die Kategorien dem Nutzer |
+| Bucket-Vererbung | `categories.inherit_bucket` (nur Unterkategorien): 1 = Bucket der Eltern, 0 = eigener Bucket inkl. „keiner“ (`NULL`) |
+| Herkunft der Zuordnung | `transactions.category_source` (`manual`/`rule`/`auto`) und `transfer_source` (`manual`/`auto`); `manual` mit leerer Zuordnung = bewusst „keine Kategorie“ bzw. „keine Umbuchung“, Automatik lässt die Buchung in Ruhe |
+| Kartenabrechnung 1:n | Nur Sammelabbuchung (und ggf. Gutschrift aufs Kartenkonto) tragen `transfer_id`; die Kartenumsätze bleiben Ausgaben und werden über `to_account_id` + `period_start`/`period_end` zugeordnet |
+| Bank-Adapter-Werte | Prüfung gegen die Registry `backend/src/adapters/registry.ts` statt DB-`CHECK` – neue Adapter brauchen keine Migration. Rollen dagegen per `CHECK` (neue Rolle = neue Migration) |
+| Migrationsschutz | Runner speichert SHA-256 jeder Migration (Zeilenenden normalisiert) und bricht ab, wenn eine angewendete Datei geändert wurde |
+| IBAN | Normalisiert (ohne Leerzeichen, groß) gespeichert, Prüfziffer (Mod 97) geprüft, je IBAN höchstens ein Konto |
+| API-Format | JSON in camelCase (`bankAdapter`), DB in snake_case |
+
 **Offene Punkte**
 
 - **Hash-Kollision bei echten Doppelbuchungen:** Zwei identische Buchungen
@@ -522,6 +536,11 @@ Status nach Abschluss einer Phase hier aktualisieren.
   innerhalb einer Datei mit in den Hash aufnehmen. Vor Umsetzung klären.
 - **Visa-Format:** identisch mit dem Volksbank-Girokonto oder eigener
   Adapter? Klärt sich mit dem ersten echten Export.
+- **Rollup-Pin per `overrides` (`rollup@4.63.6`):** Rollup 4.64.0
+  (Abhängigkeit von Vite, erschienen 2. Oktober 2026) hängt beim
+  Tree-Shaking von `react-dom` in einer Endlosschleife, `vite build`
+  kommt nie an. Override entfernen, sobald eine gefixte Rollup-Version
+  erscheint (prüfen: `npm run build` muss in wenigen Sekunden durchlaufen).
 - **Rolle „Depot / Altersvorsorge“** steht im Anforderungsdokument, ist
   aber kein aktuelles Konto. Erst ergänzen, wenn ein solches Konto
   hinzukommt.
