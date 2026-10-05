@@ -72,16 +72,16 @@ function describe(item: AttentionItem): { title: ReactNode; body?: ReactNode; hr
         action: 'übernehmen oder verwerfen',
       };
     case 'recurring_price': {
-      const higher = item.entries.some((e) => e.lastCents !== null && e.lastCents > e.sollCents);
+      const higher = item.entries.some((e) => e.actualCents !== null && e.actualCents > e.sollCents);
       return {
         title: higher ? 'Teurer geworden: Betrag weicht vom Soll ab' : 'Betrag weicht vom Soll ab',
         body: (
           <Entries
             items={item.entries.map((e) => (
               <>
-                {e.name}: Soll {formatCents(e.sollCents)}, zuletzt{' '}
-                <span className={e.lastCents !== null && e.lastCents > e.sollCents ? 'deficit' : undefined}>
-                  {e.lastCents === null ? '–' : formatCents(e.lastCents)}
+                {e.name}: Soll {formatCents(e.sollCents)}, abgebucht{e.date && <> am {formatDate(e.date)}</>}{' '}
+                <span className={e.actualCents !== null && e.actualCents > e.sollCents ? 'deficit' : undefined}>
+                  {e.actualCents === null ? '–' : formatCents(e.actualCents)}
                 </span>
               </>
             ))}
@@ -91,6 +91,21 @@ function describe(item: AttentionItem): { title: ReactNode; body?: ReactNode; hr
         action: 'zu Fixkosten & Abos',
       };
     }
+    case 'recurring_merged':
+      return {
+        title: <>{count(item.entries.length, 'Posten enthält', 'Posten enthalten')} mehrere Verträge</>,
+        body: (
+          <Entries
+            items={item.entries.map((e) => (
+              <>
+                {e.name}: Buchungen von {e.contracts} verschiedenen Verträgen (Mandatsreferenz bzw. IBAN) – aufteilen?
+              </>
+            ))}
+          />
+        ),
+        href: hrefFor('fixkosten'),
+        action: 'aufteilen',
+      };
     case 'recurring_missing':
       return {
         title: <>Erwartete Abbuchung fehlt bei {count(item.entries.length, 'Posten', 'Posten')}</>,
@@ -170,6 +185,19 @@ function describe(item: AttentionItem): { title: ReactNode; body?: ReactNode; hr
         body: <p className="hint">Importiert bis {formatDate(item.lastDate)} – Auswertungen danach sind unvollständig.</p>,
         href: hrefFor('import', { accountId: item.accountId }),
         action: 'importieren',
+      };
+    case 'export_due':
+      return {
+        title: item.lastExportAt === null ? 'Noch nie exportiert' : <>Letzter Export vor {item.days} Tagen</>,
+        body: (
+          <p className="hint">
+            {item.lastExportAt !== null && <>Zuletzt am {formatDate(item.lastExportAt.slice(0, 10))}. </>}
+            Ein Export sichert alle Daten in einer JSON-Datei – auf einen USB-Stick oder in eine Sicherung legen, falls die
+            Festplatte ausfällt.
+          </p>
+        ),
+        href: hrefFor('sicherung'),
+        action: 'jetzt exportieren',
       };
     case 'never_imported':
       return {

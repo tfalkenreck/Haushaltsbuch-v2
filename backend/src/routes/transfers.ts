@@ -7,6 +7,7 @@ import {
   detectTransfers,
   dissolveTransfer,
   getTransfer,
+  listCardRules,
   listTransfers,
   type TransferFilter,
 } from '../services/transfers.js';
@@ -35,6 +36,9 @@ export function transferRoutes(app: FastifyInstance, db: Db): void {
     },
     async (request) => listTransfers(db, request.query),
   );
+
+  /** Gewählte Zuordnungsregel je Kreditkarte mit dem Ergebnis aller geprüften Regeln (CLAUDE.md § 19). */
+  app.get('/api/transfers/card-rules', async () => listCardRules(db));
 
   /** Wie viele vorgeschlagene Paare eine eigene IBAN als Gegen-IBAN nennen (Anzahl vor der Sammelbestätigung). */
   app.get('/api/transfers/own-iban-pairs', async () => countOwnIbanPairs(db));

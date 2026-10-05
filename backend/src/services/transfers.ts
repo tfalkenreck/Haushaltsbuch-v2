@@ -3,6 +3,8 @@ import { addDays } from '../lib/date.js';
 import { AppError } from '../lib/errors.js';
 import { nowIso } from '../lib/time.js';
 import {
+  boundaryPurchases,
+  calibrateCardRule,
   cardDebitHint,
   daysApart,
   findCardPeriod,
@@ -13,9 +15,15 @@ import {
   ownAccountNamedBy,
   statementDateIn,
   TRANSFER_WINDOW_DAYS,
+  type BoundaryPurchase,
+  type CardCalibration,
+  type CardDateField,
   type CardPeriod,
   type CardPurchase,
+  type CardRule,
+  type CardRuleResult,
   type OwnAccount,
+  type Statement,
   type TransferCandidate,
 } from './transfer-detection.js';
 
@@ -30,16 +38,15 @@ import {
  * - Kategorien werden nie verändert.
  * - Kartenabrechnung 1:n: nur Sammelabbuchung und Gutschrift auf dem
  *   Kartenkonto tragen `transfer_id`; die Kartenumsätze bleiben Ausgaben
- *   und gehören über `to_account_id` + Zeitraum dazu. Der Zeitraum gilt
- *   nach Buchungstag der Bank bis zum Abrechnungsdatum, wenn der Text es
- *   nennt („Abrechnung vom …“), sonst nach Kaufdatum (`period_basis`).
+ *   und gehören über `to_account_id` + Zeitraum dazu. Nennt der Text ein
+ *   Abrechnungsdatum („Abrechnung vom …“), gilt die je Karte kalibrierte
+ *   Regel (Datum und Stichtag, `calibrateCardRule`), sonst das Kaufdatum
+ *   (`period_date`).
  */
 
 export type TransferKind = 'pair' | 'one_sided' | 'card_settlement';
 export type TransferOrigin = 'auto' | 'manual';
 export type TransferStatus = 'suggested' | 'confirmed';
-/** Datum, nach dem der Abrechnungszeitraum einer Kartenabrechnung bemessen ist. */
-export type PeriodBasis = 'bank_booking_date' | 'booking_date';
 
 interface TransferRow {
   id: number;
@@ -51,7 +58,7 @@ interface TransferRow {
   amount_cents: number;
   period_start: string | null;
   period_end: string | null;
-  period_basis: PeriodBasis | null;
+  period_date: CardDateField | null;
   detection_reason: string | null;
   notes: string | null;
   created_at: string;
@@ -79,13 +86,45 @@ export interface TransferTransaction {
   purpose: string;
 }
 
+export interface CardBoundaryPurchase extends BoundaryPurchase {
+  counterparty: string;
+  purpose: string;
+}
+
+/** Kartenumsätze um eine Grenze des Zeitraums einer Abrechnung, die nicht aufgeht. */
+export interface CardBoundary {
+  side: 'start' | 'end';
+  /** Abrechnung auf der anderen Seite der Grenze (vorige bzw. nächste derselben Karte). */
+  neighborTransferId: number | null;
+  neighborDifferenceCents: number | null;
+  /** Die Nachbarabrechnung weicht um genau den Gegenbetrag ab – ein Umsatz liegt vermutlich auf der falschen Seite. */
+  counterDeviation: boolean;
+  purchases: CardBoundaryPurchase[];
+}
+
 export interface CardCheck {
-  /** Kartenumsätze im Abrechnungszeitraum (nach `periodBasis`). */
+  /** Kartenumsätze im Abrechnungszeitraum (nach `periodDate`). */
   purchaseCount: number;
   /** Ihre Summe als positiver Abrechnungsbetrag (Erstattungen mindern ihn). */
   purchasesCents: number;
   /** Abgebuchter Betrag minus Summe der Kartenumsätze; 0 = plausibel. */
   differenceCents: number;
+  /** Regel der Karte, nach der der Zeitraum bestimmt ist; null = kein Abrechnungsdatum im Text (Kaufdatum). */
+  rule: CardRule | null;
+  /** Nur bei Abweichung und Regel: Umsätze ±5 Tage um Beginn und Ende des Zeitraums. */
+  boundaries: CardBoundary[];
+}
+
+/** Gewählte Zuordnungsregel einer Kreditkarte mit dem Ergebnis aller geprüften Regeln. */
+export interface CardRuleSummary {
+  accountId: number;
+  accountName: string;
+  rule: CardRule;
+  /** Abrechnungen mit Abrechnungsdatum. */
+  statements: number;
+  /** Davon prüfbar (schließen an die vorige an, Kartenumsätze importiert). */
+  checked: number;
+  results: CardRuleResult[];
 }
 
 export interface Transfer {
@@ -102,11 +141,8 @@ export interface Transfer {
   date: string | null;
   periodStart: string | null;
   periodEnd: string | null;
-  /**
-   * Kartenabrechnung: bank_booking_date = Zeitraum nach Buchungstag der Bank
-   * bis zum Abrechnungsdatum (= periodEnd), booking_date = nach Kaufdatum.
-   */
-  periodBasis: PeriodBasis | null;
+  /** Kartenabrechnung: Datum der Kartenumsätze, nach dem der Zeitraum (einschließlich) gilt. */
+  periodDate: CardDateField | null;
   reason: string | null;
   transactions: TransferTransaction[];
   /** Eine Seite ist nicht importiert (einseitig oder Abrechnung mit nur einer Seite). */
@@ -181,17 +217,35 @@ function linkedTransactions(db: Db, transferId: number): LinkedTx[] {
  * Kartenumsätze eines Kartenkontos: alles dort, was keine Umbuchung ist –
  * außer `excludeIds` (noch nicht verknüpfte Ausgleichsbuchungen).
  */
-function cardPurchases(db: Db, cardAccountId: number, excludeIds: ReadonlySet<number>): CardPurchase[] {
+type LoadedPurchase = CardPurchase & { id: number; counterparty: string; purpose: string };
+
+function cardPurchases(db: Db, cardAccountId: number, excludeIds: ReadonlySet<number> = new Set()): LoadedPurchase[] {
   return (
     db
       .prepare(
-        `SELECT id, booking_date, bank_booking_date, amount_cents FROM transactions
-          WHERE account_id = ? AND transfer_id IS NULL ORDER BY booking_date`,
+        `SELECT id, booking_date, bank_booking_date, value_date, amount_cents, counterparty, purpose FROM transactions
+          WHERE account_id = ? AND transfer_id IS NULL ORDER BY booking_date, id`,
       )
-      .all(cardAccountId) as { id: number; booking_date: string; bank_booking_date: string | null; amount_cents: number }[]
+      .all(cardAccountId) as {
+      id: number;
+      booking_date: string;
+      bank_booking_date: string | null;
+      value_date: string | null;
+      amount_cents: number;
+      counterparty: string;
+      purpose: string;
+    }[]
   )
     .filter((r) => !excludeIds.has(r.id))
-    .map((r) => ({ bookingDate: r.booking_date, bankBookingDate: r.bank_booking_date, amountCents: r.amount_cents }));
+    .map((r) => ({
+      id: r.id,
+      bookingDate: r.booking_date,
+      bankBookingDate: r.bank_booking_date,
+      valueDate: r.value_date,
+      amountCents: r.amount_cents,
+      counterparty: r.counterparty,
+      purpose: r.purpose,
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +260,7 @@ interface NewTransfer {
   amountCents: number;
   periodStart?: string | null;
   periodEnd?: string | null;
-  periodBasis?: PeriodBasis | null;
+  periodDate?: CardDateField | null;
   reason: string;
 }
 
@@ -216,7 +270,7 @@ function insertTransfer(db: Db, t: NewTransfer, transactionIds: number[]): numbe
     db
       .prepare(
         `INSERT INTO transfers (kind, origin, status, from_account_id, to_account_id, amount_cents,
-                                period_start, period_end, period_basis, detection_reason, created_at, updated_at)
+                                period_start, period_end, period_date, detection_reason, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
@@ -228,7 +282,7 @@ function insertTransfer(db: Db, t: NewTransfer, transactionIds: number[]): numbe
         t.amountCents,
         t.periodStart ?? null,
         t.periodEnd ?? null,
-        t.periodBasis ?? null,
+        t.periodDate ?? null,
         t.reason,
         now,
         now,
@@ -268,14 +322,37 @@ function previousPeriodEnd(db: Db, cardAccountId: number, date: string, excludeI
 }
 
 interface ComputedCardPeriod extends CardPeriod {
-  basis: PeriodBasis;
+  basis: CardDateField;
+}
+
+const textOf = (t: { counterparty: string; purpose: string }) => `${t.counterparty} ${t.purpose}`;
+
+/** Abrechnungsdatum einer Kartenabrechnung aus den Texten ihrer Buchungen. */
+function statementDateOf(db: Db, transferId: number): string | null {
+  return linkedTransactions(db, transferId).map(textOf).map(statementDateIn).find((d) => d !== null) ?? null;
+}
+
+/** Kartenabrechnungen einer Karte mit Abrechnungsdatum – Grundlage der Kalibrierung. */
+function loadStatements(db: Db, cardAccountId: number): Statement[] {
+  const rows = db
+    .prepare("SELECT id, amount_cents FROM transfers WHERE kind = 'card_settlement' AND to_account_id = ?")
+    .all(cardAccountId) as { id: number; amount_cents: number }[];
+  return rows.flatMap((r) => {
+    const statementDate = statementDateOf(db, r.id);
+    return statementDate === null ? [] : [{ id: r.id, statementDate, amountCents: r.amount_cents }];
+  });
+}
+
+/** Zuordnungsregel einer Karte, kalibriert über alle ihre Abrechnungen mit Abrechnungsdatum. */
+function cardCalibration(db: Db, cardAccountId: number, excludeTxIds: ReadonlySet<number> = new Set()): CardCalibration {
+  return calibrateCardRule(loadStatements(db, cardAccountId), cardPurchases(db, cardAccountId, excludeTxIds));
 }
 
 /**
  * Abrechnungszeitraum einer Kartenabrechnung. Nennt einer der Texte
  * (Ausgleich auf der Karte, Abbuchung vom Girokonto) „Abrechnung vom
- * TT.MM.JJJJ“, gilt der Buchungstag der Bank bis zu diesem Datum; sonst
- * das Verfahren nach Kaufdatum vor dem Tag der Abbuchung.
+ * TT.MM.JJJJ“, gilt die Regel der Karte bis zu diesem Stichtag; sonst das
+ * Verfahren nach Kaufdatum vor dem Tag der Abbuchung.
  */
 function computeCardPeriod(
   db: Db,
@@ -289,49 +366,62 @@ function computeCardPeriod(
   const purchases = cardPurchases(db, cardAccountId, excludeTxIds);
   const start = previousPeriodEnd(db, cardAccountId, date, excludeId);
   const statementDate = texts.map(statementDateIn).find((d) => d !== null) ?? null;
-  return statementDate !== null
-    ? { ...findStatementPeriod(purchases, amountCents, statementDate, start), basis: 'bank_booking_date' }
-    : { ...findCardPeriod(purchases, amountCents, date, start), basis: 'booking_date' };
+  if (statementDate === null) return { ...findCardPeriod(purchases, amountCents, date, start), basis: 'booking_date' };
+  const rule = cardCalibration(db, cardAccountId, excludeTxIds).rule;
+  return { ...findStatementPeriod(purchases, amountCents, statementDate, start, rule), basis: rule.date };
 }
 
-const textOf = (t: { counterparty: string; purpose: string }) => `${t.counterparty} ${t.purpose}`;
-
 /**
- * Zeiträume der vorgeschlagenen Kartenabrechnungen neu bestimmen, in
- * zeitlicher Reihenfolge – neue Kartenumsätze können eine Abweichung
- * auflösen. Bestätigte und von Hand angelegte bleiben, wie sie sind –
- * außer sie stammen aus der Zeit vor Migration 005 (`period_basis` NULL):
- * die werden einmalig nach dem Verfahren mit Abrechnungsdatum berechnet.
+ * Zeiträume der Kartenabrechnungen einer Karte neu bestimmen.
+ *
+ * - Mit Abrechnungsdatum: die Regel wird über alle Abrechnungen der Karte
+ *   kalibriert und gilt für jede von ihnen – auch bestätigte und von Hand
+ *   angelegte, denn bestätigt ist die Abrechnung, die Regel gehört der Karte.
+ * - Ohne Abrechnungsdatum (Kaufdatum): nur vorgeschlagene, in zeitlicher
+ *   Reihenfolge – neue Kartenumsätze können eine Abweichung auflösen.
+ *   Bestätigte und von Hand angelegte bleiben, außer sie stammen aus der
+ *   Zeit vor Migration 008 (`period_date` NULL).
  */
 function recomputeCardPeriods(db: Db, cardAccountId: number): void {
-  const rows = db
-    .prepare(
-      `SELECT tr.id, tr.amount_cents, tr.origin, tr.status, tr.period_start, tr.period_end, tr.period_basis,
-              (SELECT min(booking_date) FROM transactions t WHERE t.transfer_id = tr.id) AS d
-         FROM transfers tr WHERE tr.kind = 'card_settlement' AND tr.to_account_id = ?`,
-    )
-    .all(cardAccountId) as {
-    id: number;
-    amount_cents: number;
-    origin: TransferOrigin;
-    status: TransferStatus;
-    period_start: string | null;
-    period_end: string | null;
-    period_basis: PeriodBasis | null;
-    d: string | null;
-  }[];
-  rows.sort((a, b) => (a.d ?? '').localeCompare(b.d ?? '') || a.id - b.id);
-  const update = db.prepare(
-    'UPDATE transfers SET period_start = ?, period_end = ?, period_basis = ?, updated_at = ? WHERE id = ?',
+  const update = db.prepare('UPDATE transfers SET period_start = ?, period_end = ?, period_date = ?, updated_at = ? WHERE id = ?');
+  const current = new Map(
+    (
+      db
+        .prepare(
+          `SELECT tr.id, tr.amount_cents, tr.origin, tr.status, tr.period_start, tr.period_end, tr.period_date,
+                  (SELECT min(booking_date) FROM transactions t WHERE t.transfer_id = tr.id) AS d
+             FROM transfers tr WHERE tr.kind = 'card_settlement' AND tr.to_account_id = ?`,
+        )
+        .all(cardAccountId) as {
+        id: number;
+        amount_cents: number;
+        origin: TransferOrigin;
+        status: TransferStatus;
+        period_start: string | null;
+        period_end: string | null;
+        period_date: CardDateField | null;
+        d: string | null;
+      }[]
+    ).map((r) => [r.id, r]),
   );
-  for (const row of rows) {
-    if (row.d === null) continue;
-    if (row.period_basis !== null && (row.origin === 'manual' || row.status === 'confirmed')) continue;
-    const texts = linkedTransactions(db, row.id).map(textOf);
-    const period = computeCardPeriod(db, cardAccountId, row.amount_cents, row.d, row.id, texts);
-    if (period.start !== row.period_start || period.end !== row.period_end || period.basis !== row.period_basis) {
-      update.run(period.start, period.end, period.basis, nowIso(), row.id);
+  const write = (id: number, start: string, end: string, basis: CardDateField) => {
+    const row = current.get(id);
+    if (row && (row.period_start !== start || row.period_end !== end || row.period_date !== basis)) {
+      update.run(start, end, basis, nowIso(), id);
+      Object.assign(row, { period_start: start, period_end: end, period_date: basis });
     }
+  };
+
+  const calibration = cardCalibration(db, cardAccountId);
+  for (const p of calibration.periods) write(p.id, p.start, p.end, calibration.rule.date);
+
+  const withStatement = new Set(calibration.periods.map((p) => p.id));
+  const rest = [...current.values()].filter((r) => !withStatement.has(r.id) && r.d !== null);
+  rest.sort((a, b) => (a.d ?? '').localeCompare(b.d ?? '') || a.id - b.id);
+  for (const row of rest) {
+    if (row.period_date !== null && (row.origin === 'manual' || row.status === 'confirmed')) continue;
+    const period = computeCardPeriod(db, cardAccountId, row.amount_cents, row.d as string, row.id, []);
+    write(row.id, period.start, period.end, period.basis);
   }
 }
 
@@ -426,7 +516,7 @@ function detectCardSettlements(db: Db, accounts: OwnAccount[], candidates: Trans
           amountCents: credit.amountCents,
           periodStart: period.start,
           periodEnd: period.end,
-          periodBasis: period.basis,
+          periodDate: period.basis,
           reason: debit
             ? 'Ausgleich auf dem Kartenkonto und Abbuchung mit gleichem Betrag'
             : 'Ausgleich auf dem Kartenkonto; Abbuchung vom Girokonto nicht importiert',
@@ -455,7 +545,7 @@ function detectCardSettlements(db: Db, accounts: OwnAccount[], candidates: Trans
           amountCents: -debit.amountCents,
           periodStart: period.start,
           periodEnd: period.end,
-          periodBasis: period.basis,
+          periodDate: period.basis,
           reason:
             hint === 'iban'
               ? `Abbuchung nennt das Kartenkonto „${card.name}“`
@@ -580,7 +670,7 @@ export function detectTransfers(db: Db): DetectionResult {
             amountCents: -t.amountCents,
             periodStart: period.start,
             periodEnd: period.end,
-            periodBasis: period.basis,
+            periodDate: period.basis,
             reason: match.reason,
           },
           [t.id],
@@ -636,19 +726,97 @@ export function repairTransfersAfterDelete(db: Db): void {
 // Übersicht
 // ---------------------------------------------------------------------------
 
-function cardCheck(db: Db, row: TransferRow): CardCheck | null {
+/** SQL-Ausdruck für das Datum eines Kartenumsatzes nach der Regel (mit denselben Ersatzwerten wie `purchaseDate`). */
+const DATE_COLUMN: Record<CardDateField, string> = {
+  booking_date: 'booking_date',
+  bank_booking_date: 'coalesce(bank_booking_date, booking_date)',
+  value_date: 'coalesce(value_date, bank_booking_date, booking_date)',
+};
+
+function cardSums(db: Db, row: TransferRow): Pick<CardCheck, 'purchaseCount' | 'purchasesCents' | 'differenceCents'> | null {
   if (row.kind !== 'card_settlement' || row.to_account_id === null || !row.period_start || !row.period_end) return null;
-  const dateColumn = row.period_basis === 'bank_booking_date' ? 'coalesce(bank_booking_date, booking_date)' : 'booking_date';
   const sums = db
     .prepare(
       `SELECT count(*) AS n, coalesce(-sum(amount_cents), 0) AS cents FROM transactions
-        WHERE account_id = ? AND transfer_id IS NULL AND ${dateColumn} BETWEEN ? AND ?`,
+        WHERE account_id = ? AND transfer_id IS NULL AND ${DATE_COLUMN[row.period_date ?? 'booking_date']} BETWEEN ? AND ?`,
     )
     .get(row.to_account_id, row.period_start, row.period_end) as { n: number; cents: number };
   return { purchaseCount: sums.n, purchasesCents: sums.cents, differenceCents: row.amount_cents - sums.cents };
 }
 
-function toTransfer(db: Db, row: TransferRow, names: Map<number, string>): Transfer {
+/**
+ * Plausibilitätsprüfung aller Kartenabrechnungen der Karten, die in `rows`
+ * vorkommen (§ 11). Geht eine Abrechnung mit Abrechnungsdatum nicht auf,
+ * zeigt die Prüfung die Kartenumsätze ±5 Tage um Beginn und Ende des
+ * Zeitraums und vergleicht mit der Nachbarabrechnung: weicht die um genau
+ * den Gegenbetrag ab, liegt vermutlich ein Umsatz auf der falschen Seite
+ * der Grenze.
+ */
+function cardChecks(db: Db, rows: TransferRow[]): Map<number, CardCheck> {
+  const result = new Map<number, CardCheck>();
+  const cards = new Set(rows.filter((r) => r.kind === 'card_settlement' && r.to_account_id !== null).map((r) => r.to_account_id as number));
+  for (const cardId of cards) {
+    const all = db
+      .prepare("SELECT * FROM transfers WHERE kind = 'card_settlement' AND to_account_id = ? AND period_end IS NOT NULL")
+      .all(cardId) as TransferRow[];
+    all.sort((a, b) => (a.period_end as string).localeCompare(b.period_end as string) || a.id - b.id);
+    const calibration = cardCalibration(db, cardId);
+    const withStatement = new Set(calibration.periods.map((p) => p.id));
+    const sums = new Map(all.map((r) => [r.id, cardSums(db, r)]));
+    let purchases: LoadedPurchase[] | null = null;
+
+    all.forEach((row, i) => {
+      const base = sums.get(row.id);
+      if (!base) return;
+      const rule = withStatement.has(row.id) ? calibration.rule : null;
+      const boundaries: CardBoundary[] = [];
+      if (rule && base.differenceCents !== 0 && row.period_start && row.period_end) {
+        purchases ??= cardPurchases(db, cardId);
+        const period = { start: row.period_start, end: row.period_end };
+        const byId = new Map(purchases.map((p) => [p.id, p]));
+        for (const side of ['start', 'end'] as const) {
+          const neighbor = side === 'start' ? all[i - 1] : all[i + 1];
+          const neighborDiff = neighbor ? (sums.get(neighbor.id)?.differenceCents ?? null) : null;
+          boundaries.push({
+            side,
+            neighborTransferId: neighbor?.id ?? null,
+            neighborDifferenceCents: neighborDiff,
+            counterDeviation: neighborDiff !== null && neighborDiff === -base.differenceCents,
+            purchases: boundaryPurchases(purchases, period, side, rule.date, base.differenceCents).map((b) => ({
+              ...b,
+              counterparty: byId.get(b.id)?.counterparty ?? '',
+              purpose: byId.get(b.id)?.purpose ?? '',
+            })),
+          });
+        }
+      }
+      result.set(row.id, { ...base, rule, boundaries });
+    });
+  }
+  return result;
+}
+
+/** Zuordnungsregel je Kreditkarte (nur Karten mit Abrechnungen, die ein Abrechnungsdatum nennen). */
+export function listCardRules(db: Db): CardRuleSummary[] {
+  const cards = db.prepare("SELECT id, name FROM accounts WHERE role = 'kreditkarte' ORDER BY id").all() as { id: number; name: string }[];
+  return cards.flatMap((card) => {
+    const statements = loadStatements(db, card.id);
+    if (statements.length === 0) return [];
+    const calibration = calibrateCardRule(statements, cardPurchases(db, card.id));
+    return [
+      {
+        accountId: card.id,
+        accountName: card.name,
+        rule: calibration.rule,
+        statements: statements.length,
+        checked: calibration.checked,
+        results: calibration.results,
+      },
+    ];
+  });
+}
+
+function toTransfer(db: Db, row: TransferRow, names: Map<number, string>, checks: Map<number, CardCheck>): Transfer {
   const txs = linkedTransactions(db, row.id);
   const accountIds = new Set(txs.map((t) => t.account_id));
   const counterMissing =
@@ -668,7 +836,7 @@ function toTransfer(db: Db, row: TransferRow, names: Map<number, string>): Trans
     date: txs[0]?.booking_date ?? null,
     periodStart: row.period_start,
     periodEnd: row.period_end,
-    periodBasis: row.kind === 'card_settlement' ? (row.period_basis ?? 'booking_date') : null,
+    periodDate: row.kind === 'card_settlement' ? (row.period_date ?? 'booking_date') : null,
     reason: row.detection_reason,
     transactions: txs.map((t) => ({
       id: t.id,
@@ -680,7 +848,7 @@ function toTransfer(db: Db, row: TransferRow, names: Map<number, string>): Trans
       purpose: t.purpose,
     })),
     counterMissing,
-    card: cardCheck(db, row),
+    card: checks.get(row.id) ?? null,
   };
 }
 
@@ -705,8 +873,9 @@ export function listTransfers(db: Db, filter: TransferFilter = {}): Transfer[] {
     .prepare(`SELECT * FROM transfers ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}`)
     .all(...params) as TransferRow[];
   const names = new Map((db.prepare('SELECT id, name FROM accounts').all() as { id: number; name: string }[]).map((a) => [a.id, a.name]));
+  const checks = cardChecks(db, rows);
   return rows
-    .map((r) => toTransfer(db, r, names))
+    .map((r) => toTransfer(db, r, names, checks))
     .sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '') || b.id - a.id);
 }
 
@@ -714,7 +883,7 @@ export function getTransfer(db: Db, id: number): Transfer {
   const row = db.prepare('SELECT * FROM transfers WHERE id = ?').get(id) as TransferRow | undefined;
   if (!row) throw new AppError(`Umbuchung ${id} existiert nicht.`, 404);
   const names = new Map((db.prepare('SELECT id, name FROM accounts').all() as { id: number; name: string }[]).map((a) => [a.id, a.name]));
-  return toTransfer(db, row, names);
+  return toTransfer(db, row, names, cardChecks(db, [row]));
 }
 
 // ---------------------------------------------------------------------------
@@ -850,7 +1019,7 @@ export function markTransfer(db: Db, txId: number, input: MarkInput): Transfer {
           amountCents: amount,
           periodStart: period.start,
           periodEnd: period.end,
-          periodBasis: period.basis,
+          periodDate: period.basis,
           reason: 'von Hand',
         },
         counter ? [tx.id, counter.id] : [tx.id],

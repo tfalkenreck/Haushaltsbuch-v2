@@ -2,8 +2,42 @@ import { apiRequest, query } from './client';
 
 export type TransferKind = 'pair' | 'one_sided' | 'card_settlement';
 export type TransferStatus = 'suggested' | 'confirmed';
-/** Kartenabrechnung: Zeitraum nach Buchungstag der Bank (bis Abrechnungsdatum) oder nach Kaufdatum. */
-export type PeriodBasis = 'bank_booking_date' | 'booking_date';
+/** Datum, nach dem Kartenumsätze einer Abrechnung zugeordnet werden. */
+export type CardDateField = 'booking_date' | 'bank_booking_date' | 'value_date';
+
+/** Zuordnungsregel einer Karte: Datum und ob der Stichtag (Abrechnungsdatum) noch dazugehört. */
+export interface CardRule {
+  date: CardDateField;
+  cutoff: 'inclusive' | 'exclusive';
+}
+
+export interface CardBoundary {
+  side: 'start' | 'end';
+  neighborTransferId: number | null;
+  neighborDifferenceCents: number | null;
+  /** Nachbarabrechnung weicht um genau den Gegenbetrag ab. */
+  counterDeviation: boolean;
+  purchases: {
+    id: number;
+    /** Datum nach der Regel der Karte. */
+    date: string;
+    amountCents: number;
+    inPeriod: boolean;
+    /** Auf der anderen Seite der Grenze ginge die Abrechnung auf. */
+    explains: boolean;
+    counterparty: string;
+    purpose: string;
+  }[];
+}
+
+export interface CardRuleSummary {
+  accountId: number;
+  accountName: string;
+  rule: CardRule;
+  statements: number;
+  checked: number;
+  results: { rule: CardRule; exact: number; deviationCents: number }[];
+}
 
 export interface TransferTransaction {
   id: number;
@@ -20,6 +54,9 @@ export interface CardCheck {
   purchasesCents: number;
   /** Abgebucht minus Summe der Kartenumsätze; 0 = plausibel. */
   differenceCents: number;
+  /** Regel der Karte; null = kein Abrechnungsdatum im Text (Kaufdatum). */
+  rule: CardRule | null;
+  boundaries: CardBoundary[];
 }
 
 export interface Transfer {
@@ -35,7 +72,7 @@ export interface Transfer {
   date: string | null;
   periodStart: string | null;
   periodEnd: string | null;
-  periodBasis: PeriodBasis | null;
+  periodDate: CardDateField | null;
   reason: string | null;
   transactions: TransferTransaction[];
   counterMissing: boolean;
@@ -49,6 +86,7 @@ export interface DetectionResult {
 
 export const fetchTransfers = (filter: { status?: TransferStatus; accountId?: number } = {}) =>
   apiRequest<Transfer[]>('GET', `/transfers${query(filter)}`);
+export const fetchCardRules = () => apiRequest<CardRuleSummary[]>('GET', '/transfers/card-rules');
 export const detectTransfers = () => apiRequest<DetectionResult>('POST', '/transfers/detect');
 export const confirmTransfer = (id: number) => apiRequest<Transfer>('POST', `/transfers/${id}/confirm`);
 /** Anzahl vorgeschlagener Paare, deren Gegen-IBAN ein eigenes Konto ist. */

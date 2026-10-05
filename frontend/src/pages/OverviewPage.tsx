@@ -120,7 +120,7 @@ function Categories({ o }: { o: MonthOverview }) {
               >
                 {c.name}
               </a>
-              {c.inflowCents > 0 && <small className="muted block">davon erstattet/gutgeschrieben {formatCents(c.inflowCents)}</small>}
+              {c.inflowCents > 0 && <small className="muted block">Gutschriften {formatCents(c.inflowCents)} (nicht abgezogen)</small>}
             </td>
             <td className="num">{formatCents(c.outflowCents)}</td>
             <td className="num">{formatPermille(c.sharePermille)}</td>
@@ -287,7 +287,11 @@ export function OverviewPage({ params }: Props) {
             </p>
           )}
 
-          <h3>Ausgaben nach Kategorie</h3>
+          <h3>Ausgaben nach Kategorie (brutto)</h3>
+          <p className="hint">
+            Brutto: alle Abflüsse je Kategorie, Erstattungen und Gutschriften sind nicht abgezogen (sie stehen als Hinweis
+            daneben). Netto je Kategorie zeigt das Budget.
+          </p>
           <Categories o={overview} />
 
           <h3>Verlauf über 12 Monate</h3>

@@ -27,7 +27,12 @@ export type AttentionItem =
       negativeBalance: { balanceCents: number; date: string } | null;
     })
   | (Base & { kind: 'recurring_suggestions'; entries: { key: string; name: string; amountCents: number; interval: Interval; duplicate: boolean }[] })
-  | (Base & { kind: 'recurring_price'; entries: { itemId: number; name: string; sollCents: number; lastCents: number | null }[] })
+  | (Base & {
+      kind: 'recurring_price';
+      /** Die abweichende Buchung (Datum, Betrag) – nicht unbedingt die letzte. */
+      entries: { itemId: number; name: string; sollCents: number; date: string | null; actualCents: number | null }[];
+    })
+  | (Base & { kind: 'recurring_merged'; entries: { itemId: number; name: string; contracts: number }[] })
   | (Base & { kind: 'recurring_missing'; entries: { itemId: number; name: string; dueDate: string | null; ended: boolean }[] })
   | (Base & { kind: 'recurring_cancel'; entries: { itemId: number; name: string; cancelBy: string; contractEndDate: string }[] })
   | (Base & { kind: 'uncategorized'; count: number; outflowCents: number; inflowCents: number })
@@ -38,6 +43,7 @@ export type AttentionItem =
     })
   | (Base & { kind: 'import_gap'; accountId: number; accountName: string; gaps: { start: string; end: string }[] })
   | (Base & { kind: 'import_stale'; accountId: number; accountName: string; lastDate: string; days: number })
+  | (Base & { kind: 'export_due'; lastExportAt: string | null; days: number | null })
   | (Base & { kind: 'never_imported' | 'needs_reimport'; accountId: number; accountName: string });
 
 export const fetchAttention = () => apiRequest<{ items: AttentionItem[] }>('GET', '/attention');

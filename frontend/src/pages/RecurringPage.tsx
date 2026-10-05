@@ -7,6 +7,7 @@ import {
   deleteRecurring,
   dismissSuggestion,
   fetchRecurring,
+  splitRecurring,
   updateRecurring,
   type ItemCheck,
   type OccurrenceState,
@@ -53,7 +54,9 @@ function statusText(item: RecurringItem): string {
     case 'ok':
       return c.lastBooking ? `zuletzt ${formatDate(c.lastBooking.date)}` : '';
     case 'differs':
-      return c.lastBooking ? `zuletzt ${formatCents(c.lastBooking.amountCents)} statt ${formatCents(item.amountCents)}` : '';
+      return c.differing?.date && c.differing.amountCents !== null
+        ? `am ${formatDate(c.differing.date)} ${formatCents(c.differing.amountCents)} statt ${formatCents(item.amountCents)}`
+        : '';
     case 'missing':
       return missing ? `erwartet am ${formatDate(missing.dueDate)} – verschoben, gekündigt oder anderes Konto?` : '';
     case 'ended':
@@ -89,6 +92,12 @@ function Attention({ overview }: { overview: RecurringOverview }) {
       points.push({ key: `e${i.id}`, text: `${i.name}: Vertragsende ${formatDate(cancel.contractEndDate)} ist vorbei – verlängert? Datum anpassen.` });
     }
     if (i.duplicates.length > 0) points.push({ key: `d${i.id}`, text: `${i.name}: doppelt? Ähnlich: ${i.duplicates.join(', ')}` });
+    if (i.contracts) {
+      points.push({
+        key: `m${i.id}`,
+        text: `${i.name}: enthält Buchungen von ${i.contracts.length} verschiedenen Verträgen – aufteilen? („Verträge“ in der Zeile)`,
+      });
+    }
   }
   const fresh = overview.suggestions.filter((s) => !s.ended).length;
   if (fresh > 0) points.push({ key: 'new', text: `${fresh} erkannte${fresh === 1 ? 's' : ''} Abo/Fixkosten zum Prüfen (unten)` });
@@ -101,6 +110,86 @@ function Attention({ overview }: { overview: RecurringOverview }) {
           <li key={p.key}>{p.text}</li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+/**
+ * Verschmolzener Posten: Buchungen mehrerer Verträge (Mandatsreferenz,
+ * IBAN). Aufteilen nur auf Knopfdruck; der Hauptvertrag bleibt beim Posten.
+ */
+function Contracts({ item, onChange }: { item: RecurringItem; onChange: (o: RecurringOverview) => void }) {
+  const others = (item.contracts ?? []).filter((c) => !c.main);
+  const [chosen, setChosen] = useState<Set<string>>(() => new Set(others.map((c) => c.key)));
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  if (!item.contracts) return null;
+
+  async function split() {
+    setBusy(true);
+    setError(null);
+    try {
+      onChange((await splitRecurring(item.id, [...chosen])).overview);
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="panel warnings">
+      <p>
+        <strong>Mehrere Verträge in einem Posten?</strong> Die Buchungen von „{item.name}“ gehören zu {item.contracts.length}{' '}
+        verschiedenen Verträgen. Ausgewählte werden eigene Posten (Art und Kategorie wie hier, Betrag und Intervall aus ihren
+        Buchungen); der erste bleibt bei „{item.name}“. Von Hand zugeordnete Buchungen bleiben, wo sie sind.
+      </p>
+      <table className="data">
+        <thead>
+          <tr>
+            <th />
+            <th>Vertrag</th>
+            <th className="num">Buchungen</th>
+            <th>Zeitraum</th>
+            <th className="num">zuletzt</th>
+          </tr>
+        </thead>
+        <tbody>
+          {item.contracts.map((c) => (
+            <tr key={c.key}>
+              <td>
+                {c.main ? (
+                  <span className="tag">bleibt</span>
+                ) : (
+                  <input
+                    type="checkbox"
+                    aria-label={`${c.label} abteilen`}
+                    checked={chosen.has(c.key)}
+                    onChange={(e) => {
+                      const next = new Set(chosen);
+                      if (e.target.checked) next.add(c.key);
+                      else next.delete(c.key);
+                      setChosen(next);
+                    }}
+                  />
+                )}
+              </td>
+              <td>{c.label}</td>
+              <td className="num">{c.count}</td>
+              <td>
+                {formatDate(c.firstDate)} – {formatDate(c.lastDate)}
+              </td>
+              <td className="num">{formatCents(c.lastAmountCents)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {error && <p className="error">{error}</p>}
+      <div className="form-actions">
+        <button type="button" disabled={busy || chosen.size === 0} onClick={() => void split()}>
+          {chosen.size} Vertr{chosen.size === 1 ? 'ag' : 'äge'} als eigene Posten anlegen
+        </button>
+      </div>
     </div>
   );
 }
@@ -186,6 +275,7 @@ function Items({
 }) {
   const [editing, setEditing] = useState<number | null>(null);
   const [open, setOpen] = useState<number | null>(null);
+  const [contractsOpen, setContractsOpen] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function run(action: () => Promise<RecurringOverview>) {
@@ -223,6 +313,7 @@ function Items({
               <tr className={i.active ? undefined : 'inactive'}>
                 <td>
                   {i.name} <span className="tag">{RECURRING_KIND_LABELS[i.kind]}</span>
+                  {i.bucket === 'save' && <span className="tag tag-ok">Sparrate</span>}
                   {i.isSuspected && <span className="tag tag-warn">vermutet</span>}
                   {i.categoryPath && <small className="muted block">{i.categoryPath}</small>}
                   {i.check.cancel && (
@@ -239,6 +330,11 @@ function Items({
                     </small>
                   )}
                   {i.duplicates.length > 0 && <small className="warnings block">doppelt? ähnlich: {i.duplicates.join(', ')}</small>}
+                  {i.contracts && (
+                    <button type="button" className="link warnings block" onClick={() => setContractsOpen(contractsOpen === i.id ? null : i.id)}>
+                      {i.contracts.length} Verträge – aufteilen?
+                    </button>
+                  )}
                 </td>
                 <td>{i.accountName ?? <span className="muted">beliebig</span>}</td>
                 <td className="num">{formatCents(i.amountCents)}</td>
@@ -278,6 +374,20 @@ function Items({
                   </button>
                 </td>
               </tr>
+              {contractsOpen === i.id && i.contracts && (
+                <tr>
+                  <td colSpan={8}>
+                    <Contracts
+                      key={i.contracts.map((c) => c.key).join()}
+                      item={i}
+                      onChange={(o) => {
+                        onChange(o);
+                        setContractsOpen(null);
+                      }}
+                    />
+                  </td>
+                </tr>
+              )}
               {open === i.id && (
                 <tr>
                   <td colSpan={8}>
@@ -488,6 +598,13 @@ export function RecurringPage({ params }: Props) {
           <p className="summary">
             {overview.totals.count} laufende Posten · zusammen <strong>{formatCents(overview.totals.monthlyCents)}</strong> je Monat
             (Fixkosten {formatCents(overview.totals.fixedCostMonthlyCents)}, Abos {formatCents(overview.totals.subscriptionMonthlyCents)})
+            {overview.totals.savingsMonthlyCents > 0 && (
+              <>
+                {' '}
+                – davon Sparraten <strong>{formatCents(overview.totals.savingsMonthlyCents)}</strong> (Kategorien mit Bucket „Sparen“,
+                z. B. ETF-Sparplan, Bausparen): Geld, das zurückgelegt wird, keine Kosten
+              </>
+            )}
           </p>
           <Attention overview={overview} />
 

@@ -1,4 +1,4 @@
-import { addDays, addMonths, parseGermanDate } from '../lib/date.js';
+import { addDays, addMonths, daysBetween, parseGermanDate } from '../lib/date.js';
 import { normalizeIban } from '../lib/iban.js';
 
 /**
@@ -191,11 +191,47 @@ export function cardDebitHint(t: TransferCandidate, card: OwnAccount, accounts: 
 }
 
 export interface CardPurchase {
+  id?: number;
   /** Kaufdatum. */
   bookingDate: string;
   /** Buchungstag der Bank; fehlt beim Altbestand (dann gilt das Kaufdatum). */
   bankBookingDate?: string | null;
+  /** Valuta; fehlt sie, gilt der Buchungstag der Bank. */
+  valueDate?: string | null;
   amountCents: number;
+}
+
+/** Datum, nach dem Kartenumsätze einer Abrechnung zugeordnet werden. */
+export type CardDateField = 'booking_date' | 'bank_booking_date' | 'value_date';
+
+/**
+ * Zuordnungsregel einer Kreditkarte (CLAUDE.md § 19): nach welchem Datum
+ * ein Kartenumsatz zu einer Abrechnung gehört, und ob ein Umsatz am
+ * Abrechnungsdatum (Stichtag) noch dazuzählt (`inclusive`) oder schon zur
+ * nächsten (`exclusive`).
+ */
+export interface CardRule {
+  date: CardDateField;
+  cutoff: 'inclusive' | 'exclusive';
+}
+
+/** Alle geprüften Regeln; die erste ist das bisherige Verfahren und gewinnt bei Gleichstand. */
+export const CARD_RULES: readonly CardRule[] = [
+  { date: 'bank_booking_date', cutoff: 'inclusive' },
+  { date: 'bank_booking_date', cutoff: 'exclusive' },
+  { date: 'booking_date', cutoff: 'inclusive' },
+  { date: 'booking_date', cutoff: 'exclusive' },
+  { date: 'value_date', cutoff: 'inclusive' },
+  { date: 'value_date', cutoff: 'exclusive' },
+];
+
+export const DEFAULT_CARD_RULE: CardRule = CARD_RULES[0] as CardRule;
+
+/** Datum eines Kartenumsatzes nach der Regel; fehlende Angaben fallen auf Buchungstag bzw. Kaufdatum zurück. */
+export function purchaseDate(p: CardPurchase, field: CardDateField): string {
+  if (field === 'booking_date') return p.bookingDate;
+  if (field === 'value_date') return p.valueDate ?? p.bankBookingDate ?? p.bookingDate;
+  return p.bankBookingDate ?? p.bookingDate;
 }
 
 /**
@@ -275,38 +311,171 @@ export function findCardPeriod(
 
 /**
  * Abrechnungszeitraum bei bekanntem Abrechnungsdatum (Erkenntnis aus dem
- * ersten Echtdaten-Test, CLAUDE.md § 19): Die Bank rechnet nach ihrem
- * Buchungstag ab, nicht nach dem Kaufdatum. Der Zeitraum umfasst die
- * Kartenumsätze mit Buchungstag nach der vorigen Abrechnung bis
- * einschließlich des Abrechnungsdatums – ein Kauf am 17.09., gebucht am
- * 19.09., gehört zur Abrechnung nach dem 18.09.
+ * ersten Echtdaten-Test, CLAUDE.md § 19): Die Bank rechnet nicht nach dem
+ * Kaufdatum ab, sondern nach einem eigenen Datum bis zum Stichtag. Welches
+ * Datum und ob der Stichtag dazugehört, legt die Regel der Karte fest
+ * (`calibrateCardRule`); ohne Regel gilt das bisherige Verfahren: Buchungstag
+ * der Bank bis einschließlich Abrechnungsdatum – ein Kauf am 17.09.,
+ * gebucht am 19.09., gehört zur Abrechnung nach dem 18.09.
  *
- * Beginn ist `fixedStart` (Tag nach der vorigen Abrechnung derselben Karte),
- * solange er im Suchfenster liegt. Sonst der früheste Buchungstag, ab dem
- * die Summe genau passt, ersatzweise der Tag nach demselben Datum im
- * Vormonat. Altbestand ohne Buchungstag zählt mit dem Kaufdatum.
+ * Beginn ist `fixedStart` (Tag nach dem Ende der vorigen Abrechnung
+ * derselben Karte), solange er im Suchfenster liegt. Sonst der früheste
+ * Tag, ab dem die Summe genau passt, ersatzweise der Tag nach demselben
+ * Stichtag im Vormonat.
  */
 export function findStatementPeriod(
   purchases: CardPurchase[],
   amountCents: number,
   statementDate: string,
   fixedStart: string | null,
+  rule: CardRule = DEFAULT_CARD_RULE,
 ): CardPeriod {
-  const bankDate = (p: CardPurchase) => p.bankBookingDate ?? p.bookingDate;
+  const dateOf = (p: CardPurchase) => purchaseDate(p, rule.date);
+  const end = rule.cutoff === 'inclusive' ? statementDate : addDays(statementDate, -1);
   const earliest = addDays(statementDate, -CARD_LOOKBACK_DAYS);
-  const inWindow = purchases.filter((p) => bankDate(p) >= earliest && bankDate(p) <= statementDate);
-  const sumFrom = (start: string) =>
-    inWindow.filter((p) => bankDate(p) >= start).reduce((sum, p) => sum - p.amountCents, 0);
+  const inWindow = purchases.filter((p) => dateOf(p) >= earliest && dateOf(p) <= end);
+  const sumFrom = (start: string) => inWindow.filter((p) => dateOf(p) >= start).reduce((sum, p) => sum - p.amountCents, 0);
   const period = (start: string): CardPeriod => {
     const sumCents = sumFrom(start);
-    return { start, end: statementDate, sumCents, exact: sumCents === amountCents };
+    return { start, end, sumCents, exact: sumCents === amountCents };
   };
 
-  if (fixedStart !== null && fixedStart >= earliest && fixedStart <= statementDate) return period(fixedStart);
+  if (fixedStart !== null && fixedStart >= earliest && fixedStart <= end) return period(fixedStart);
 
-  const days = [...new Set(inWindow.map(bankDate))].sort();
+  const days = [...new Set(inWindow.map(dateOf))].sort();
   for (const day of days) {
     if (sumFrom(day) === amountCents) return period(day);
   }
-  return period(addDays(addMonths(statementDate, -1), 1));
+  const monthBefore = addMonths(statementDate, -1);
+  return period(rule.cutoff === 'inclusive' ? addDays(monthBefore, 1) : monthBefore);
+}
+
+/** Kartenabrechnung mit Abrechnungsdatum aus dem Text („Abrechnung vom …“). */
+export interface Statement {
+  id: number;
+  statementDate: string;
+  /** Abgerechneter Betrag, positiv. */
+  amountCents: number;
+}
+
+export interface StatementPeriod extends CardPeriod {
+  id: number;
+  /** Beginnt am Tag nach der vorigen Abrechnung – nur solche sind für die Kalibrierung aussagekräftig. */
+  chained: boolean;
+}
+
+/**
+ * Zeiträume aller Abrechnungen einer Karte nach einer Regel, in zeitlicher
+ * Reihenfolge: jede beginnt am Tag nach dem Ende der vorigen, wenn diese
+ * höchstens `CARD_LOOKBACK_DAYS` zurückliegt.
+ */
+export function statementPeriods(statements: Statement[], purchases: CardPurchase[], rule: CardRule): StatementPeriod[] {
+  const sorted = [...statements].sort((a, b) => a.statementDate.localeCompare(b.statementDate) || a.id - b.id);
+  const result: StatementPeriod[] = [];
+  let previous: { statementDate: string; end: string } | null = null;
+  for (const s of sorted) {
+    const fixedStart =
+      previous !== null && daysBetween(previous.statementDate, s.statementDate) <= CARD_LOOKBACK_DAYS ? addDays(previous.end, 1) : null;
+    const period = findStatementPeriod(purchases, s.amountCents, s.statementDate, fixedStart, rule);
+    result.push({ ...period, id: s.id, chained: fixedStart !== null && fixedStart === period.start });
+    previous = { statementDate: s.statementDate, end: period.end };
+  }
+  return result;
+}
+
+export interface CardRuleResult {
+  rule: CardRule;
+  /** Prüfbare Abrechnungen, deren Summe genau aufgeht. */
+  exact: number;
+  /** Summe der Beträge, um die die prüfbaren Abrechnungen abweichen. */
+  deviationCents: number;
+}
+
+export interface CardCalibration {
+  rule: CardRule;
+  /** Prüfbare Abrechnungen: Zeitraum schließt an die vorige an und enthält Kartenumsätze. */
+  checked: number;
+  /** Ergebnis jeder geprüften Regel, beste zuerst. */
+  results: CardRuleResult[];
+  /** Zeiträume nach der gewählten Regel. */
+  periods: StatementPeriod[];
+}
+
+/**
+ * Kalibriert die Zuordnungsregel einer Karte (CLAUDE.md § 19): jede Regel
+ * aus `CARD_RULES` wird über alle Abrechnungen mit Abrechnungsdatum
+ * gerechnet; gewählt wird die, bei der die meisten Abrechnungen exakt
+ * aufgehen, bei Gleichstand die mit der kleinsten Gesamtabweichung, dann
+ * die frühere in der Liste. Bewertet werden nur Abrechnungen, die an die
+ * vorige anschließen (sonst ist der Beginn gesucht und passt immer) und in
+ * deren Zeitraum nach irgendeiner Regel Kartenumsätze liegen (sonst ist
+ * der Kartenimport noch nicht so weit).
+ */
+export function calibrateCardRule(statements: Statement[], purchases: CardPurchase[]): CardCalibration {
+  const byRule = CARD_RULES.map((rule) => ({ rule, periods: statementPeriods(statements, purchases, rule) }));
+  const amounts = new Map(statements.map((s) => [s.id, s.amountCents]));
+  const checkable = new Set(
+    statements
+      .map((s) => s.id)
+      .filter((id) => byRule.every((r) => r.periods.find((p) => p.id === id)?.chained) && byRule.some((r) => r.periods.find((p) => p.id === id)?.sumCents !== 0)),
+  );
+  const scored = byRule.map(({ rule, periods }, order) => {
+    const relevant = periods.filter((p) => checkable.has(p.id));
+    return {
+      order,
+      periods,
+      result: {
+        rule,
+        exact: relevant.filter((p) => p.exact).length,
+        deviationCents: relevant.reduce((sum, p) => sum + Math.abs((amounts.get(p.id) ?? 0) - p.sumCents), 0),
+      },
+    };
+  });
+  scored.sort((a, b) => b.result.exact - a.result.exact || a.result.deviationCents - b.result.deviationCents || a.order - b.order);
+  const best = scored[0] as (typeof scored)[number];
+  return { rule: best.result.rule, checked: checkable.size, results: scored.map((s) => s.result), periods: best.periods };
+}
+
+/** So viele Tage vor und nach einer Grenze zeigt die Prüfung die Kartenumsätze. */
+export const BOUNDARY_DAYS = 5;
+
+export interface BoundaryPurchase {
+  id: number;
+  /** Datum nach der Regel der Karte. */
+  date: string;
+  amountCents: number;
+  /** Liegt im Zeitraum dieser Abrechnung. */
+  inPeriod: boolean;
+  /**
+   * Läge der Umsatz auf der anderen Seite der Grenze, ginge die Abrechnung
+   * auf: außerhalb mit Betrag = Abweichung, innerhalb mit Betrag = −Abweichung.
+   */
+  explains: boolean;
+}
+
+/**
+ * Kartenumsätze ±`BOUNDARY_DAYS` Tage um eine Grenze des Zeitraums (erster
+ * Tag `start` bzw. letzter Tag `end`), für eine Abrechnung, die nicht
+ * aufgeht. `differenceCents` = abgerechnet minus Summe im Zeitraum.
+ */
+export function boundaryPurchases(
+  purchases: (CardPurchase & { id: number })[],
+  period: { start: string; end: string },
+  side: 'start' | 'end',
+  field: CardDateField,
+  differenceCents: number,
+): BoundaryPurchase[] {
+  // Grenze zwischen dem letzten Tag davor und dem ersten danach.
+  const firstAfter = side === 'start' ? period.start : addDays(period.end, 1);
+  const from = addDays(firstAfter, -BOUNDARY_DAYS);
+  const to = addDays(firstAfter, BOUNDARY_DAYS - 1);
+  return purchases
+    .map((p) => ({ p, date: purchaseDate(p, field) }))
+    .filter(({ date }) => date >= from && date <= to)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.p.id - b.p.id)
+    .map(({ p, date }) => {
+      const inPeriod = date >= period.start && date <= period.end;
+      const charge = -p.amountCents;
+      return { id: p.id, date, amountCents: p.amountCents, inPeriod, explains: charge !== 0 && (inPeriod ? charge === -differenceCents : charge === differenceCents) };
+    });
 }

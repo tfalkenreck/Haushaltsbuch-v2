@@ -15,10 +15,10 @@ export interface TransactionFilter {
   to?: string | undefined;
   /**
    * Worauf sich `from`/`to` beziehen: Buchungsdatum (Standard, bei
-   * Kartenumsätzen das Kaufdatum) oder Buchungstag der Bank (Zeitraum
-   * einer Kartenabrechnung mit Abrechnungsdatum).
+   * Kartenumsätzen das Kaufdatum), Buchungstag der Bank oder Valuta – je
+   * nach Regel der Karte für den Zeitraum einer Kartenabrechnung.
    */
-  dateBasis?: 'booking' | 'bank' | undefined;
+  dateBasis?: 'booking' | 'bank' | 'value' | undefined;
   /** Suchtext in Gegenpartei, Verwendungszweck und Vorgangsart. */
   q?: string | undefined;
   /** Kategorie inklusive ihrer Unterkategorien. */
@@ -178,7 +178,12 @@ export function listTransactions(db: Db, filter: TransactionFilter): Transaction
     where.push('t.import_batch_id = ?');
     params.push(filter.importBatchId);
   }
-  const dateColumn = filter.dateBasis === 'bank' ? 'coalesce(t.bank_booking_date, t.booking_date)' : 't.booking_date';
+  const dateColumn =
+    filter.dateBasis === 'bank'
+      ? 'coalesce(t.bank_booking_date, t.booking_date)'
+      : filter.dateBasis === 'value'
+        ? 'coalesce(t.value_date, t.bank_booking_date, t.booking_date)'
+        : 't.booking_date';
   if (filter.from) {
     where.push(`${dateColumn} >= ?`);
     params.push(filter.from);

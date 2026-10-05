@@ -13,6 +13,7 @@
   ],
   "scripts": {
     "dev": "concurrently --kill-others-on-fail --names backend,frontend --prefix-colors blue,green \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "start": "concurrently --kill-others-on-fail --names backend,frontend,browser --prefix-colors blue,green,gray \"npm run dev -w backend\" \"npm run dev -w frontend\" \"node scripts/open-when-ready.mjs\"",
     "dev:backend": "npm run dev -w backend",
     "dev:frontend": "npm run dev -w frontend",
     "build": "npm run build -w backend && npm run build -w frontend",

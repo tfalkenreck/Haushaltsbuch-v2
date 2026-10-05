@@ -36,6 +36,7 @@ export function RecurringForm({ accounts, categories, initial, editing = false, 
   const [noticeUnit, setNoticeUnit] = useState<NoticeUnit>(initial?.noticePeriodUnit ?? 'months');
   const [creditorId, setCreditorId] = useState(initial?.creditorId ?? '');
   const [mandateReference, setMandateReference] = useState(initial?.mandateReference ?? '');
+  const [counterpartyIban, setCounterpartyIban] = useState(initial?.counterpartyIban ?? '');
   const [active, setActive] = useState(initial?.active ?? true);
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const [busy, setBusy] = useState(false);
@@ -65,6 +66,7 @@ export function RecurringForm({ accounts, categories, initial, editing = false, 
         categoryId,
         creditorId: creditorId.trim() || null,
         mandateReference: mandateReference.trim() || null,
+        counterpartyIban: counterpartyIban.trim() || null,
         active,
         notes: notes.trim() || null,
       });
@@ -151,10 +153,11 @@ export function RecurringForm({ accounts, categories, initial, editing = false, 
         </span>
       </label>
       <details className="wide">
-        <summary>SEPA-Merkmale (optional)</summary>
+        <summary>Merkmale des Vertrags (optional)</summary>
         <p className="hint">
           Gläubiger-ID und Mandatsreferenz aus einer Lastschrift ordnen Buchungen unabhängig von der Schreibweise der
-          Gegenpartei zu.
+          Gegenpartei zu; die Mandatsreferenz trennt mehrere Verträge beim selben Anbieter. Die IBAN des Empfängers trennt
+          Überweisungen an Empfänger gleichen Namens (z. B. an dich selbst: Gemeinschaftskonto, Strom-Dauerauftrag).
         </p>
         <label>
           Gläubiger-ID
@@ -163,6 +166,10 @@ export function RecurringForm({ accounts, categories, initial, editing = false, 
         <label>
           Mandatsreferenz
           <input value={mandateReference} maxLength={50} onChange={(e) => setMandateReference(e.target.value)} />
+        </label>
+        <label>
+          IBAN des Empfängers
+          <input value={counterpartyIban} maxLength={50} onChange={(e) => setCounterpartyIban(e.target.value)} />
         </label>
       </details>
       <label className="wide">

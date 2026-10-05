@@ -1,4 +1,5 @@
 import { buildApp } from './app.js';
+import { backupBeforeMigrations } from './db/backup.js';
 import { openDatabase, resolveDbPath } from './db/connection.js';
 import { migrate } from './db/migrate.js';
 
@@ -6,10 +7,22 @@ import { migrate } from './db/migrate.js';
 const HOST = '127.0.0.1';
 const PORT = Number(process.env['PORT'] ?? 3001);
 
-const db = openDatabase(resolveDbPath());
+const dbPath = resolveDbPath();
+const db = openDatabase(dbPath);
+
+// Vor jeder Umstellung der Datenbank eine Sicherung – ohne Sicherung keine Migration.
+let backup: string | null;
+try {
+  backup = await backupBeforeMigrations(db, dbPath);
+} catch (err) {
+  console.error('Sicherung vor der Datenbank-Umstellung fehlgeschlagen – Start abgebrochen, nichts wurde geändert.', err);
+  db.close();
+  process.exit(1);
+}
 const { applied } = migrate(db);
 
 const app = buildApp({ db, logger: true });
+if (backup) app.log.info({ backup }, 'Datenbank vor der Umstellung gesichert');
 if (applied.length > 0) app.log.info({ applied }, 'Migrationen angewendet');
 
 app.addHook('onClose', async () => {

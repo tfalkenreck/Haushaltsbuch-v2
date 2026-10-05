@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  boundaryPurchases,
+  calibrateCardRule,
   cardDebitHint,
   findCardPeriod,
   findStatementPeriod,
@@ -207,5 +209,68 @@ describe('findStatementPeriod', () => {
     expect(findStatementPeriod([{ bookingDate: '2026-09-01', amountCents: -1000 }], 1000, '2026-09-18', '2026-08-19')).toMatchObject({
       exact: true,
     });
+  });
+});
+
+describe('Zuordnungsregel der Karte kalibrieren', () => {
+  // Die Bank rechnet nach Kaufdatum ab, Stichtag ausschließlich. Kaufdatum
+  // und Buchungstag liegen ein bis zwei Tage auseinander.
+  let id = 1;
+  const p = (bookingDate: string, bankBookingDate: string, euros: number) => ({ id: id++, bookingDate, bankBookingDate, amountCents: -euros * 100 });
+  const purchases = [
+    p('2026-06-01', '2026-06-02', 50),
+    p('2026-06-18', '2026-06-19', 20), // am Stichtag gekauft → nächste Abrechnung
+    p('2026-07-05', '2026-07-06', 40),
+    p('2026-07-17', '2026-07-19', 30), // vor dem Stichtag gekauft, danach gebucht
+    p('2026-08-10', '2026-08-11', 25),
+    p('2026-09-01', '2026-09-02', 60),
+    p('2026-09-18', '2026-09-19', 15),
+  ];
+  const statements = [
+    { id: 101, statementDate: '2026-06-18', amountCents: 5000 },
+    { id: 102, statementDate: '2026-07-18', amountCents: 9000 },
+    { id: 103, statementDate: '2026-08-18', amountCents: 2500 },
+    { id: 104, statementDate: '2026-09-18', amountCents: 6000 },
+  ];
+
+  it('wählt die Regel, bei der die meisten Abrechnungen exakt aufgehen', () => {
+    const calibration = calibrateCardRule(statements, purchases);
+    expect(calibration.rule).toEqual({ date: 'booking_date', cutoff: 'exclusive' });
+    // Die erste Abrechnung hat keinen Vorgänger – ihr Beginn ist gesucht und zählt nicht.
+    expect(calibration.checked).toBe(3);
+    expect(calibration.results[0]).toEqual({ rule: { date: 'booking_date', cutoff: 'exclusive' }, exact: 3, deviationCents: 0 });
+    // Das bisherige Verfahren (Buchungstag, einschließlich): Abweichungen mit wechselndem Vorzeichen.
+    expect(calibration.results.find((r) => r.rule.date === 'bank_booking_date' && r.rule.cutoff === 'inclusive')).toMatchObject({
+      exact: 1,
+      deviationCents: 6000,
+    });
+    expect(calibration.periods.map((x) => [x.id, x.start, x.end, x.exact])).toEqual([
+      [101, '2026-06-01', '2026-06-17', true],
+      [102, '2026-06-18', '2026-07-17', true],
+      [103, '2026-07-18', '2026-08-17', true],
+      [104, '2026-08-18', '2026-09-17', true],
+    ]);
+  });
+
+  it('bleibt ohne prüfbare Abrechnung beim bisherigen Verfahren', () => {
+    expect(calibrateCardRule([statements[1]!], purchases)).toMatchObject({ rule: { date: 'bank_booking_date', cutoff: 'inclusive' }, checked: 0 });
+    expect(calibrateCardRule([], [])).toMatchObject({ rule: { date: 'bank_booking_date', cutoff: 'inclusive' }, checked: 0, periods: [] });
+  });
+
+  it('nutzt die Valuta, wenn die Bank danach abrechnet', () => {
+    const withValue = purchases.map((x) => ({ ...x, bookingDate: '2026-01-01', bankBookingDate: '2026-01-01', valueDate: x.bookingDate }));
+    expect(calibrateCardRule(statements, withValue).rule).toEqual({ date: 'value_date', cutoff: 'exclusive' });
+  });
+
+  it('zeigt die Umsätze um die Grenze und welcher die Abweichung erklärt', () => {
+    // Nach Buchungstag einschließlich fehlen der Juli-Abrechnung 30 € (Kauf 17.07., gebucht 19.07.).
+    const boundary = boundaryPurchases(purchases, { start: '2026-06-19', end: '2026-07-18' }, 'end', 'bank_booking_date', 3000);
+    expect(boundary).toEqual([{ id: 4, date: '2026-07-19', amountCents: -3000, inPeriod: false, explains: true }]);
+    const start = boundaryPurchases(purchases, { start: '2026-06-19', end: '2026-07-18' }, 'start', 'bank_booking_date', 3000);
+    expect(start).toEqual([{ id: 2, date: '2026-06-19', amountCents: -2000, inPeriod: true, explains: false }]);
+    // Gegenstück in der August-Abrechnung: dort ist derselbe Umsatz zu viel.
+    expect(boundaryPurchases(purchases, { start: '2026-07-19', end: '2026-08-18' }, 'start', 'bank_booking_date', -3000)).toMatchObject([
+      { id: 4, inPeriod: true, explains: true },
+    ]);
   });
 });

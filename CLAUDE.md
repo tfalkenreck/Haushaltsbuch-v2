@@ -91,10 +91,13 @@ fließt, und daraus **konkrete Hinweise** ableitet – nicht nur Zahlen anzeigt.
 haushaltsbuch/
 ├─ CLAUDE.md              diese Spezifikation
 ├─ README.md              Setup & Start (Windows zuerst)
+├─ Haushaltsbuch starten.cmd        Start per Doppelklick (npm start, öffnet den Browser)
+├─ Haushaltsbuch aktualisieren.cmd  git pull, npm install, npm test
+├─ scripts/               open-when-ready.mjs (Browser öffnen, sobald die App antwortet)
 ├─ package.json           Workspaces + gemeinsame Skripte
 ├─ tsconfig.base.json     gemeinsame Compiler-Optionen
 ├─ vitest.config.ts       Testprojekte backend/frontend
-├─ data/                  (gitignored) SQLite-Datei, Exporte – zur Laufzeit angelegt
+├─ data/                  (gitignored) SQLite-Datei, backups/ – zur Laufzeit angelegt
 ├─ backend/
 │  ├─ src/
 │  │  ├─ index.ts         Serverstart
@@ -473,7 +476,7 @@ schwankende Schreibweise der Gegenpartei).
 | 5 | Deckungsprüfung und Ausgaben am Ausgabenkonto vorbei | erledigt |
 | 6 | Fixkosten/Abos manuell plus automatische Erkennung | erledigt |
 | 7 | Dashboard, Budget, Prognose, Sparziele | erledigt |
-| 8 | Export/Re-Import, Startskript, Feinschliff | offen |
+| 8 | Export/Re-Import, Startskript, Feinschliff | erledigt |
 
 Status nach Abschluss einer Phase hier aktualisieren.
 
@@ -667,6 +670,41 @@ Anlass: Im Mai wurden die Daueraufträge umgestellt (fünf beendet, Beträge ge�
 | Sparziele | Tabelle `savings_goals` aus Migration 001, keine neue Migration. Priorität: kleinere Zahl = wichtiger (ab 1). Konto beim Anlegen standardmäßig das einzige aktive Sparkonto. Stand: Guthaben des Kontos (aktueller Kontostand § 12.5) wird den Zielen des Kontos nach Priorität zugeteilt, je Ziel höchstens der Zielbetrag; unbekannter Kontostand = 0 mit Hinweis. Plan: Ø-Überschuss der Prognose fließt ganz ins wichtigste offene Ziel, dann ins nächste; Überschuss eines Monats zählt an dessen Ende. Nötige Rate = Rest ÷ Monatsenden bis vor den Wunschmonat (mind. 1), aufgerundet |
 | Abo-Rückkopplung | Abos (Art „Abo“) aus der Prognose, Monatswert = ihre Abbuchungen in der Prognose ÷ Prognosemonate. Standardmäßig alle ausgewählt, abwählbar; das Backend rechnet den Plan mit dem um diese Beträge erhöhten Überschuss neu (`?without=`) und nennt je Ziel „N Monate früher“ |
 
+**Korrekturen nach dem Echtdaten-Test von Phase 6/7 (5. Oktober 2026)**
+
+Anlass: Sechs Allianz-Verträge wurden ein Posten mit 22 Buchungen;
+Überweisungen an eigene Konten, ans Gemeinschaftskonto und ein
+Strom-Dauerauftrag tragen alle den Namen des Kontoinhabers. 8 von 8
+Kartenabrechnungen gingen nicht auf, mit wechselndem Vorzeichen
+(18.08.: Ausgleich 479,18 € gegen 430,53 €; 18.09.: 504,20 € gegen 547,65 €).
+
+| Frage | Entscheidung |
+|-------|--------------|
+| Vertragsschlüssel (Fixkosten/Abos) | Mandatsreferenz vor Gläubiger-ID vor Gegen-IBAN vor normalisierter Gegenpartei. Anbieter = Gläubiger-ID, sonst Gegen-IBAN (`iban:…`), sonst Gegenpartei; Vertrag = Anbieter + Mandatsreferenz. PayPal unverändert (Händler aus dem Text, PayPals Gläubiger-ID, Mandat und IBAN zählen nicht). Schlüssel mit Gläubiger-ID bleiben gleich, übernommene Posten werden weiter erkannt. `recurring_items.counterparty_iban` (Migration 008), im Formular „IBAN des Empfängers“, beim Übernehmen aus der letzten Buchung |
+| Zuordnung zu Posten | Der Anbieter-Rang (Erkennungsschlüssel des Anbieters) gilt nur noch für Posten, deren Schlüssel an keinem Mandat hängt – ein Vertrag nimmt keine Buchungen anderer Verträge desselben Anbieters auf. Gläubiger-ID **oder IBAN** allein (von Hand angelegt): Rang 4. Gegenpartei als Wörter: nur ohne widersprechendes Merkmal (andere Mandatsreferenz, Gläubiger-ID oder IBAN als der Posten) |
+| Verschmolzene Posten | Erkannt bei jeder Anzeige: die automatisch zugeordneten Buchungen eines Postens gehören zu mindestens **zwei Verträgen mit je mindestens zwei Buchungen** (einzelne Buchungen mit wechselndem Mandat, z. B. girocard, zählen nicht). Hauptvertrag: Erkennungsschlüssel des Postens, sonst seine Merkmale (Mandat, IBAN), sonst Betrag am nächsten am Soll, dann die meisten Buchungen. Offener Punkt auf der Seite Fixkosten und der Übersicht |
+| Aufteilen | Nur auf Knopfdruck, Auswahl der Verträge; der Hauptvertrag bleibt. Jeder gewählte Vertrag wird ein übernommener Posten (Name „Posten · Mandat …/IBAN …“, Art und Kategorie des Postens, Betrag der letzten Buchung, Intervall aus dem mittleren Abstand, Erkennungsschlüssel = Vertragsschlüssel, inaktiv, wenn der nächste Termin samt Toleranz vor dem Ende der Importe liegt). Ein verworfener Vorschlag mit demselben Schlüssel wird dabei gelöscht. Bleibt nur der Hauptvertrag, bekommt der Posten dessen Schlüssel und Merkmale. Von Hand zugeordnete Buchungen bleiben, wo sie sind |
+| „Betrag weicht vom Soll ab“ | Nennt die Buchung, die den Status bestimmt (jüngste einem Termin zugeordnete, mit Datum und Betrag) – nicht die letzte Buchung, die eine Nachzahlung ohne Termin sein kann (`check.differing`) |
+| Kartenabrechnung: Regel je Karte | Geprüft werden sechs Regeln: Kaufdatum, Buchungstag der Bank oder Valuta × Stichtag (Abrechnungsdatum aus dem Text) einschließlich oder ausschließlich. Fehlende Valuta → Buchungstag, fehlender Buchungstag → Kaufdatum. Zeiträume je Regel in Folge: Beginn = Tag nach dem Ende der vorigen Abrechnung derselben Karte (≤ 62 Tage), sonst gesucht. Bewertet werden nur **prüfbare** Abrechnungen (schließen an die vorige an, nach irgendeiner Regel Umsätze im Zeitraum). Gewählt: meiste exakt aufgehende, dann kleinste Gesamtabweichung, dann bisheriges Verfahren (Buchungstag, einschließlich) zuerst. Ohne prüfbare Abrechnung gilt das bisherige Verfahren. Bei jeder Erkennung neu kalibriert, nichts gespeichert außer den Zeiträumen |
+| Wen die Regel betrifft | Alle Abrechnungen mit Abrechnungsdatum, auch bestätigte und von Hand angelegte (bestätigt ist die Abrechnung, die Regel gehört der Karte). Ohne Abrechnungsdatum unverändert nach Kaufdatum. `transfers.period_date` (Migration 008, `booking_date`/`bank_booking_date`/`value_date`) ersetzt `period_basis`; Zeitraum gilt einschließlich nach diesem Datum; Buchungsliste filtert per `dateBasis=bank|value` |
+| Anzeige | Seite Umbuchungen: gewählte Regel je Karte mit „N von M prüfbaren Abrechnungen gehen genau auf“ und dem Ergebnis aller Regeln; an jeder Abrechnung die Regel |
+| Abrechnung geht trotzdem nicht auf | Kartenumsätze ±5 Tage um Beginn und Ende des Zeitraums (nach dem Datum der Regel), je „im Zeitraum“/„außerhalb“. Markiert: die Nachbarabrechnung (vorige bzw. nächste derselben Karte) weicht um genau den Gegenbetrag ab; ein Umsatz, mit dessen Wechsel über die Grenze die Abrechnung aufginge (außerhalb mit Betrag = Abweichung, innerhalb mit Betrag = −Abweichung) |
+| Sparraten in der Fixkosten-Summe | Posten, deren Kategorie (vererbt) den Bucket `save` hat, stehen als „davon Sparraten“ neben der Summe und tragen den Hinweis „Sparrate“. Sie bleiben in der Summe und in Fixkosten/Abos enthalten |
+
+**Getroffen in Phase 8 (5. Oktober 2026)**
+
+| Frage | Entscheidung |
+|-------|--------------|
+| Exportformat | JSON `{ format: 'haushaltsbuch-export', version: 1, exportedAt, schemaVersion, tables }`, je Tabelle alle Zeilen wie in der Datenbank (snake_case, Cent, ISO-Datum), nach `rowid`. Ohne `schema_migrations` und `app_state`. Dateiname `haushaltsbuch-JJJJ-MM-TT-export.json` (von `.gitignore` erfasst). Download per `POST /api/export` |
+| Re-Import | Nur in eine leere Datenbank (alle Datentabellen leer außer den mitgelieferten Kategorien, die ersetzt werden) und nur bei gleichem `schemaVersion` – kein Umrechnen alter Stände. Eine Transaktion, Fremdschlüssel erst am Ende geprüft (`defer_foreign_keys`); unbekannte Tabellen/Spalten, fehlende Tabellen, Werte außer Text/Zahl/null und alles, was STRICT oder CHECK ablehnt (z. B. Kommabetrag in einer Cent-Spalte), brechen ganz ab. Danach gilt der Zeitpunkt der Datei als letzter Export |
+| Export-Hinweis | `app_state.last_export_at` (Migration 009). Offener Punkt auf der Übersicht (blau), wenn es Buchungen gibt und noch nie oder vor mehr als **30 Tagen** exportiert wurde |
+| Sicherung vor Migrationen | Beim Start, wenn Migrationen ausstehen und schon welche angewendet sind (frische Datenbank: keine Sicherung): SQLite-Backup-API nach `backups/` neben der Datenbankdatei, Name `haushaltsbuch-JJJJ-MM-TT_HHMMSS-vor-NNN.db` (lokale Zeit, NNN = erste ausstehende Migration). Die 10 neuesten bleiben, fremde Dateien im Ordner werden nicht angefasst. Schlägt die Sicherung fehl, startet die App nicht und migriert nicht |
+| Startskript | `Haushaltsbuch starten.cmd`: installiert beim ersten Start (`node_modules` fehlt), dann `npm start` = Backend und Frontend im Entwicklungsmodus plus `scripts/open-when-ready.mjs`, das `127.0.0.1:3001/api/health` und `127.0.0.1:5173` abfragt (höchstens 2 Minuten) und dann den Standardbrowser öffnet. Fenster schließen beendet die App |
+| Update-Skript | `Haushaltsbuch aktualisieren.cmd`: Hinweis „App vorher beenden“, dann `git pull --ff-only`, `npm install`, `npm test`; jeder Fehler bricht mit offenem Fenster ab. Beide Skripte UTF-8 mit `chcp 65001`, CRLF per `.gitattributes` |
+| Abdeckung | Heute und Zukunft sind nie eine Lücke: Lücken enden spätestens gestern, eine Lücke ab heute entfällt (Abdeckung je Konto und offene Punkte; die Importmeldung nennt nur Lücken zwischen importierten Zeiträumen) |
+| Übersicht | „Ausgaben nach Kategorie (brutto)“ mit Erklärung: Gutschriften derselben Kategorie sind nicht abgezogen, netto zeigt das Budget |
+| Rollup | Geprüft am 5. Oktober 2026: 4.64.0 ist weiter die neueste Version und hängt bei `vite build` (nach 180 s abgebrochen, mit 4.63.6 rund 1,5 s). Override bleibt |
+
 **Offene Punkte**
 
 - **Deckungsprüfung an echten Daten prüfen:** Erkennung der Daueraufträge
@@ -687,8 +725,22 @@ Anlass: Im Mai wurden die Daueraufträge umgestellt (fünf beendet, Beträge ge�
 - **Rollup-Pin per `overrides` (`rollup@4.63.6`):** Rollup 4.64.0
   (Abhängigkeit von Vite, erschienen 2. Oktober 2026) hängt beim
   Tree-Shaking von `react-dom` in einer Endlosschleife, `vite build`
-  kommt nie an. Override entfernen, sobald eine gefixte Rollup-Version
-  erscheint (prüfen: `npm run build` muss in wenigen Sekunden durchlaufen).
+  kommt nie an. Am 5. Oktober 2026 erneut geprüft: keine neuere Version,
+  4.64.0 hängt weiter. Override entfernen, sobald eine gefixte
+  Rollup-Version erscheint (prüfen: `npm run build` muss in wenigen
+  Sekunden durchlaufen).
+- **Kartenregel und Vertragsschlüssel an echten Daten prüfen:** Welche
+  Regel die Kalibrierung für die Visa wählt und ob damit alle
+  Abrechnungen aufgehen; ob das Aufteilen die Allianz-Verträge richtig
+  trennt. Geht keine der sechs Regeln auf, die Umsätze an den Grenzen
+  ansehen – vielleicht rechnet die Bank nach einem weiteren Datum ab.
+- **§ 13 nutzt noch den alten Schlüssel:** „Ausgaben am Ausgabenkonto
+  vorbei“ und die Ursachen der Deckungsprüfung gruppieren weiter nach
+  `lib/item-key.ts` (Gegenpartei vor Gläubiger-ID, ohne IBAN).
+  Überweisungen an den Kontoinhaber mit verschiedenen IBANs können dort
+  ein Kandidat werden. Nicht umgestellt, weil `bypass_decisions` an
+  diesem Schlüssel hängen – Umstellung bräuchte eine Übernahme der
+  Entscheidungen.
 - **Rolle „Depot / Altersvorsorge“** steht im Anforderungsdokument, ist
   aber kein aktuelles Konto. Erst ergänzen, wenn ein solches Konto
   hinzukommt.
@@ -727,8 +779,6 @@ Anlass: Im Mai wurden die Daueraufträge umgestellt (fünf beendet, Beträge ge�
   Supermarkt-Schwelle sind nur synthetisch getestet (Audible/Ring aus dem
   Echtdaten-Test).
 
-**Merkposten für spätere Phasen**
+**Merkposten**
 
-- Phase 8 (Feinschliff): Der heutige Tag zählt in der Abdeckung als
-  Lücke („03.10.2026 – 03.10.2026“) – heute und Zukunft nie als Lücke
-  werten.
+- Erledigt in Phase 8: Der heutige Tag zählte in der Abdeckung als Lücke.

@@ -3,7 +3,7 @@ import type { Bucket } from '../api/categories';
 import type { Interval } from '../api/funding';
 import type { CheckStatus, NoticeUnit, RecurringKind } from '../api/recurring';
 import type { PatternType, RuleField } from '../api/rules';
-import type { TransferKind } from '../api/transfers';
+import type { CardDateField, CardRule, TransferKind } from '../api/transfers';
 
 export const ROLE_LABELS: Record<AccountRole, string> = {
   einnahmen: 'Einnahmen',
@@ -42,6 +42,17 @@ export const PATTERN_TYPE_HINTS: Record<PatternType, string> = {
   wildcard:
     '* = beliebig viele Zeichen, ? = genau ein Zeichen, alles andere wörtlich. Der Ausdruck muss den ganzen Text treffen: „REWE*“ = beginnt mit REWE.',
 };
+
+export const CARD_DATE_LABELS: Record<CardDateField, string> = {
+  booking_date: 'Kaufdatum',
+  bank_booking_date: 'Buchungstag der Bank',
+  value_date: 'Valuta',
+};
+
+/** „nach Buchungstag der Bank, Stichtag einschließlich“. */
+export function cardRuleLabel(rule: CardRule): string {
+  return `nach ${CARD_DATE_LABELS[rule.date]}, Stichtag ${rule.cutoff === 'inclusive' ? 'einschließlich' : 'ausschließlich'}`;
+}
 
 export const TRANSFER_KIND_LABELS: Record<TransferKind, string> = {
   pair: 'Paar',

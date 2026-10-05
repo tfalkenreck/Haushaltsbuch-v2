@@ -52,6 +52,15 @@ export function loadMigrations(dir: string = MIGRATIONS_DIR): Migration[] {
   return migrations;
 }
 
+/** Ausstehende Migrationen und Zahl der angewendeten – ohne etwas zu ändern. */
+export function pendingMigrations(db: Db, migrations: Migration[] = loadMigrations()): { pending: Migration[]; appliedCount: number } {
+  const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get();
+  const applied = new Set(
+    exists ? (db.prepare('SELECT version FROM schema_migrations').all() as { version: number }[]).map((r) => r.version) : [],
+  );
+  return { pending: migrations.filter((m) => !applied.has(m.version)), appliedCount: applied.size };
+}
+
 /**
  * Wendet alle noch nicht angewendeten Migrationen an, jede in einer eigenen
  * Transaktion. Angewendete Migrationen stehen mit Prüfsumme in

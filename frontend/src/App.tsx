@@ -8,6 +8,7 @@ import { ImportPage } from './pages/ImportPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { RecurringPage } from './pages/RecurringPage';
 import { RulesPage } from './pages/RulesPage';
+import { BackupPage } from './pages/BackupPage';
 import { SavingsGoalsPage } from './pages/SavingsGoalsPage';
 import { TransactionsPage } from './pages/TransactionsPage';
 import { TransfersPage } from './pages/TransfersPage';
@@ -26,6 +27,7 @@ const NAV: { page: Page; label: string }[] = [
   { page: 'sparziele', label: 'Sparziele' },
   { page: 'kategorien', label: 'Kategorien' },
   { page: 'regeln', label: 'Regeln' },
+  { page: 'sicherung', label: 'Sicherung' },
 ];
 
 export function App() {
@@ -56,6 +58,7 @@ export function App() {
       {route.page === 'sparziele' && <SavingsGoalsPage />}
       {route.page === 'kategorien' && <CategoriesPage />}
       {route.page === 'regeln' && <RulesPage />}
+      {route.page === 'sicherung' && <BackupPage />}
     </main>
   );
 }

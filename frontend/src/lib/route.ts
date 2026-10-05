@@ -12,7 +12,8 @@ export type Page =
   | 'prognose'
   | 'sparziele'
   | 'kategorien'
-  | 'regeln';
+  | 'regeln'
+  | 'sicherung';
 
 export interface Route {
   page: Page;
@@ -32,6 +33,7 @@ const PAGES: readonly Page[] = [
   'sparziele',
   'kategorien',
   'regeln',
+  'sicherung',
 ];
 
 /** Ist `name` eine Seite der Oberfläche? (Links aus den offenen Punkten.) */

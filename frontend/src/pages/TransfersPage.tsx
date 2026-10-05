@@ -5,14 +5,17 @@ import {
   confirmTransfer,
   detectTransfers,
   dissolveTransfer,
+  fetchCardRules,
   fetchOwnIbanPairCount,
   fetchTransfers,
+  type CardBoundary,
+  type CardRuleSummary,
   type Transfer,
   type TransferStatus,
 } from '../api/transfers';
 import { notifyDataChanged } from '../lib/events';
 import { formatCents, formatDate } from '../lib/format';
-import { TRANSFER_KIND_LABELS } from '../lib/labels';
+import { cardRuleLabel, TRANSFER_KIND_LABELS } from '../lib/labels';
 import { hrefFor } from '../lib/route';
 
 interface Props {
@@ -24,6 +27,39 @@ const message = (err: unknown) => (err instanceof Error ? err.message : String(e
 function statusFromParams(params: URLSearchParams): TransferStatus | undefined {
   const value = params.get('status');
   return value === 'suggested' || value === 'confirmed' ? value : undefined;
+}
+
+const DATE_BASIS = { booking_date: undefined, bank_booking_date: 'bank', value_date: 'value' } as const;
+
+/** Kartenumsätze ±5 Tage um eine Grenze des Zeitraums – welcher liegt auf der falschen Seite? */
+function Boundary({ boundary: b, transfer: t }: { boundary: CardBoundary; transfer: Transfer }) {
+  const diff = t.card?.differenceCents ?? 0;
+  return (
+    <span className="block boundary">
+      <strong>{b.side === 'start' ? `Beginn ${formatDate(t.periodStart)}` : `Ende ${formatDate(t.periodEnd)}`}</strong>
+      {b.neighborDifferenceCents !== null && (
+        <span className={b.counterDeviation ? 'warnings block' : 'muted block'}>
+          {b.side === 'start' ? 'Vorige' : 'Nächste'} Abrechnung: Abweichung {formatCents(b.neighborDifferenceCents, { sign: true })}
+          {b.counterDeviation && ' – genau der Gegenbetrag: ein Umsatz liegt vermutlich auf der falschen Seite der Grenze.'}
+        </span>
+      )}
+      {b.purchases.length === 0 ? (
+        <span className="muted block">keine Kartenumsätze ±5 Tage um die Grenze</span>
+      ) : (
+        b.purchases.map((p) => (
+          <span key={p.id} className={`block${p.explains ? ' warnings' : ''}`}>
+            {formatDate(p.date)} {formatCents(p.amountCents, { sign: true })} <span className="muted">{p.counterparty || p.purpose}</span>{' '}
+            {p.inPeriod ? <span className="tag">im Zeitraum</span> : <span className="tag">außerhalb</span>}
+            {p.explains && (
+              <span className="tag tag-warn">
+                {p.inPeriod ? 'ohne ihn' : 'mit ihm'} ginge die Abrechnung auf ({formatCents(diff, { sign: true })})
+              </span>
+            )}
+          </span>
+        ))
+      )}
+    </span>
+  );
 }
 
 /** Was an einer Umbuchung auffällt: fehlende Seite, Abweichung der Kartenabrechnung. */
@@ -46,12 +82,11 @@ function Check({ transfer: t }: { transfer: Transfer }) {
       );
     }
     if (t.card) {
-      const byBankDate = t.periodBasis === 'bank_booking_date';
       const link = hrefFor('buchungen', {
         accountId: t.toAccountId ?? undefined,
         from: t.periodStart ?? undefined,
         to: t.periodEnd ?? undefined,
-        dateBasis: byBankDate ? 'bank' : undefined,
+        dateBasis: DATE_BASIS[t.periodDate ?? 'booking_date'],
         transfers: 'exclude',
       });
       hints.push(
@@ -61,9 +96,7 @@ function Check({ transfer: t }: { transfer: Transfer }) {
           </a>
           : {formatCents(t.card.purchasesCents)}
           <span className="muted block">
-            {byBankDate
-              ? `nach Buchungstag der Bank, Abrechnung vom ${formatDate(t.periodEnd)}`
-              : 'nach Kaufdatum (kein Abrechnungsdatum im Text)'}
+            {t.card.rule ? `${cardRuleLabel(t.card.rule)} (Regel der Karte)` : 'nach Kaufdatum (kein Abrechnungsdatum im Text)'}
           </span>
         </span>,
       );
@@ -78,6 +111,16 @@ function Check({ transfer: t }: { transfer: Transfer }) {
           </span>
         ),
       );
+      if (t.card.boundaries.length > 0) {
+        hints.push(
+          <details key="bounds">
+            <summary>Umsätze an den Grenzen des Zeitraums</summary>
+            {t.card.boundaries.map((b) => (
+              <Boundary key={b.side} boundary={b} transfer={t} />
+            ))}
+          </details>,
+        );
+      }
     }
   }
   return hints.length > 0 ? <>{hints}</> : <span className="muted">–</span>;
@@ -97,6 +140,7 @@ export function TransfersPage({ params }: Props) {
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [ownIbanPairs, setOwnIbanPairs] = useState(0);
+  const [cardRules, setCardRules] = useState<CardRuleSummary[]>([]);
 
   const reload = useCallback(() => {
     fetchTransfers({ status, accountId })
@@ -104,6 +148,9 @@ export function TransfersPage({ params }: Props) {
       .catch((err: unknown) => setError(message(err)));
     fetchOwnIbanPairCount()
       .then((r) => setOwnIbanPairs(r.count))
+      .catch((err: unknown) => setError(message(err)));
+    fetchCardRules()
+      .then(setCardRules)
       .catch((err: unknown) => setError(message(err)));
   }, [status, accountId]);
 
@@ -221,6 +268,39 @@ export function TransfersPage({ params }: Props) {
           {suggested > 0 && <>{suggested} Umbuchung(en) vorgeschlagen – bitte prüfen. </>}
           {mismatches > 0 && <>{mismatches} Kartenabrechnung(en) passen nicht zur Summe der Kartenumsätze.</>}
         </p>
+      )}
+
+      {cardRules.length > 0 && (
+        <div className="panel">
+          <strong>Zuordnung der Kartenumsätze zu den Abrechnungen</strong>
+          <p className="hint">
+            Je Karte geprüft: Kaufdatum, Buchungstag der Bank oder Valuta, Abrechnungsdatum (Stichtag) einschließlich oder
+            ausschließlich. Gewählt ist die Regel, bei der die meisten Abrechnungen genau aufgehen.
+          </p>
+          {cardRules.map((c) => (
+            <div key={c.accountId}>
+              <p>
+                „{c.accountName}“: <strong>{cardRuleLabel(c.rule)}</strong> –{' '}
+                {c.checked === 0
+                  ? 'noch keine prüfbare Abrechnung (es braucht zwei aufeinanderfolgende mit Abrechnungsdatum), daher das bisherige Verfahren'
+                  : `${c.results[0]?.exact ?? 0} von ${c.checked} prüfbaren Abrechnungen ${(c.results[0]?.exact ?? 0) === 1 ? 'geht' : 'gehen'} genau auf`}
+              </p>
+              {c.checked > 0 && (
+                <details>
+                  <summary>alle geprüften Regeln</summary>
+                  <ul className="plain">
+                    {c.results.map((r) => (
+                      <li key={`${r.rule.date}-${r.rule.cutoff}`}>
+                        {cardRuleLabel(r.rule)}: {r.exact} von {c.checked} genau
+                        {r.deviationCents > 0 && <span className="muted">, Abweichungen zusammen {formatCents(r.deviationCents)}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+          ))}
+        </div>
       )}
 
       {transfers && transfers.length === 0 && <p>Keine Umbuchungen gefunden.</p>}

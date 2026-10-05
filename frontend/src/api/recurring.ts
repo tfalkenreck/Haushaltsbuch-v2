@@ -1,3 +1,4 @@
+import type { Bucket } from './categories';
 import { apiRequest } from './client';
 import type { Interval } from './funding';
 
@@ -20,12 +21,24 @@ export interface PriceChange {
   toCents: number;
 }
 
+export interface ContractGroup {
+  key: string;
+  label: string;
+  count: number;
+  firstDate: string;
+  lastDate: string;
+  lastAmountCents: number;
+  main: boolean;
+}
+
 export interface ItemCheck {
   status: CheckStatus;
   occurrences: Occurrence[];
   missingCount: number;
   extraBookings: { transactionId: number; date: string; amountCents: number }[];
   lastBooking: { transactionId: number; date: string; amountCents: number } | null;
+  /** Bei „Betrag weicht ab“: der Termin mit der abweichenden Buchung. */
+  differing: Occurrence | null;
   priceChange: PriceChange | null;
   suggestedAmountCents: number | null;
   nextDueDate: string | null;
@@ -51,6 +64,8 @@ export interface RecurringItem {
   categoryPath: string | null;
   creditorId: string | null;
   mandateReference: string | null;
+  counterpartyIban: string | null;
+  bucket: Bucket | null;
   origin: 'manual' | 'auto';
   isSuspected: boolean;
   active: boolean;
@@ -59,6 +74,8 @@ export interface RecurringItem {
   bookingCount: number;
   check: ItemCheck;
   duplicates: string[];
+  /** Buchungen mehrerer Verträge (verschmolzen) – Aufteilen anbieten. */
+  contracts: ContractGroup[] | null;
 }
 
 export interface RecurringSuggestion {
@@ -88,7 +105,14 @@ export interface RecurringOverview {
   items: RecurringItem[];
   suggestions: RecurringSuggestion[];
   dismissed: { id: number; name: string; amountCents: number; interval: Interval; detectionKey: string }[];
-  totals: { count: number; monthlyCents: number; fixedCostMonthlyCents: number; subscriptionMonthlyCents: number };
+  totals: {
+    count: number;
+    monthlyCents: number;
+    fixedCostMonthlyCents: number;
+    subscriptionMonthlyCents: number;
+    /** Davon Sparraten (Kategorie mit Bucket „Sparen“). */
+    savingsMonthlyCents: number;
+  };
 }
 
 export interface RecurringItemInput {
@@ -106,6 +130,7 @@ export interface RecurringItemInput {
   categoryId?: number | null;
   creditorId?: string | null;
   mandateReference?: string | null;
+  counterpartyIban?: string | null;
   active?: boolean;
   notes?: string | null;
 }
@@ -118,6 +143,9 @@ export const updateRecurring = (id: number, input: RecurringItemInput) => apiReq
 export const deleteRecurring = (id: number) => apiRequest<RecurringOverview>('DELETE', `/recurring/${id}`);
 export const confirmSuggestion = (input: { key: string; name?: string; kind?: RecurringKind }) =>
   apiRequest<{ id: number; overview: RecurringOverview }>('POST', '/recurring/suggestions/confirm', input);
+/** Verschmolzenen Posten aufteilen: die genannten Verträge werden eigene Posten. */
+export const splitRecurring = (id: number, keys: string[]) =>
+  apiRequest<{ created: number[]; overview: RecurringOverview }>('POST', `/recurring/${id}/split`, { keys });
 export const dismissSuggestion = (key: string) => apiRequest<RecurringOverview>('POST', '/recurring/suggestions/dismiss', { key });
 
 /** Buchung von Hand einem Posten zuordnen; `null` = „nicht wiederkehrend“. */

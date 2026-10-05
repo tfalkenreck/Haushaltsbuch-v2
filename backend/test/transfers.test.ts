@@ -11,14 +11,17 @@ import {
   countOwnIbanPairs,
   detectTransfers,
   dissolveTransfer,
+  listCardRules,
   listTransfers,
   markTransfer,
   resetTransfer,
   unmarkTransfer,
   type Transfer,
 } from '../src/services/transfers.js';
+import { addDays } from '../src/lib/date.js';
 import { createTestDb } from './helpers/db.js';
 import { fixture, IBAN } from './helpers/fixtures.js';
+import { volksbankCsv, type VbRow } from './helpers/volksbank-csv.js';
 
 let db: Db;
 let giro: number;
@@ -173,17 +176,17 @@ describe('Kartenabrechnung mit Abrechnungsdatum', () => {
     expect(settlements).toHaveLength(2);
     expect(settlements[0]).toMatchObject({
       amountCents: 8000,
-      periodBasis: 'bank_booking_date',
+      periodDate: 'bank_booking_date',
       periodStart: '2026-08-05',
       periodEnd: '2026-08-18',
       counterMissing: false,
-      card: { purchaseCount: 1, purchasesCents: 8000, differenceCents: 0 },
+      card: { purchaseCount: 1, purchasesCents: 8000, differenceCents: 0, rule: { date: 'bank_booking_date', cutoff: 'inclusive' }, boundaries: [] },
     });
     // Tankstelle: gekauft 17.08., gebucht 19.08. → September-Abrechnung.
     // Elektromarkt: gekauft 17.09., gebucht 19.09. → nicht in der Abrechnung vom 18.09.
     expect(settlements[1]).toMatchObject({
       amountCents: 19840,
-      periodBasis: 'bank_booking_date',
+      periodDate: 'bank_booking_date',
       periodStart: '2026-08-19',
       periodEnd: '2026-09-18',
       counterMissing: false,
@@ -195,21 +198,93 @@ describe('Kartenabrechnung mit Abrechnungsdatum', () => {
     });
   });
 
-  it('berechnet Abrechnungen aus der Zeit vor dem Abrechnungsdatum einmalig neu, auch bestätigte', () => {
+  it('berechnet Abrechnungen mit Abrechnungsdatum nach der Regel der Karte neu, auch bestätigte', () => {
     run(giro, 'kartenabrechnung/giro.csv');
     run(visa, 'kartenabrechnung/visa.csv');
     const september = listTransfers(db).find((t) => t.amountCents === 19840) as Transfer;
     confirmTransfer(db, september.id);
-    db.prepare("UPDATE transfers SET period_basis = NULL, period_start = '2026-08-19', period_end = '2026-09-21'").run();
+    db.prepare("UPDATE transfers SET period_date = NULL, period_start = '2026-08-19', period_end = '2026-09-21' WHERE id = ?").run(september.id);
     expect(listTransfers(db).find((t) => t.id === september.id)?.card?.differenceCents).not.toBe(0);
 
     detectTransfers(db);
     expect(listTransfers(db).find((t) => t.id === september.id)).toMatchObject({
       status: 'confirmed',
-      periodBasis: 'bank_booking_date',
+      periodDate: 'bank_booking_date',
       periodEnd: '2026-09-18',
       card: { differenceCents: 0 },
     });
+  });
+});
+
+describe('Zuordnungsregel der Karte', () => {
+  const de = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
+  /** Kartenumsatz: gekauft `purchase`, gebucht `booked`. */
+  const card = (purchase: string, booked: string, euros: number): VbRow => ({
+    date: booked,
+    amountCents: -euros * 100,
+    bookingText: 'Basislastschrift',
+    purpose: `HAENDLER ${euros}  DE  12345678901   EUR  ${euros},00Umsatz vom ${de(purchase)}      Visa Hauptkarte`,
+  });
+  const credit = (statementDate: string, euros: number): VbRow => ({
+    date: addDays(statementDate, 2),
+    amountCents: euros * 100,
+    bookingText: 'Gutschrift',
+    purpose: `Ausgleich Kartenkonto Abrechnung vom ${de(statementDate)}`,
+  });
+  const purchases = [
+    card('2026-06-01', '2026-06-02', 50),
+    card('2026-06-18', '2026-06-19', 20),
+    card('2026-07-05', '2026-07-06', 40),
+    card('2026-07-17', '2026-07-19', 30),
+    card('2026-08-10', '2026-08-11', 25),
+    card('2026-09-01', '2026-09-02', 60),
+    card('2026-09-18', '2026-09-19', 15),
+  ];
+  const importVisa = (rows: VbRow[]) =>
+    importFile(db, { accountId: visa, fileName: 'visa.csv', bytes: volksbankCsv(IBAN.volksbankVisa, rows), periodStart: '2026-06-01', periodEnd: '2026-09-30' });
+  const settlements = () =>
+    listTransfers(db)
+      .filter((t) => t.kind === 'card_settlement')
+      .sort((a, b) => (a.periodEnd ?? '').localeCompare(b.periodEnd ?? ''));
+
+  it('wählt je Karte die Regel, nach der die Abrechnungen aufgehen, und zeigt sie an', () => {
+    // Die Bank rechnet nach Kaufdatum ab, Stichtag ausschließlich.
+    importVisa([...purchases, credit('2026-06-18', 50), credit('2026-07-18', 90), credit('2026-08-18', 25), credit('2026-09-18', 60)]);
+    expect(listCardRules(db)).toEqual([
+      expect.objectContaining({ accountName: 'Visa', rule: { date: 'booking_date', cutoff: 'exclusive' }, statements: 4, checked: 3 }),
+    ]);
+    const list = settlements();
+    expect(list.map((t) => [t.periodStart, t.periodEnd, t.periodDate, t.card?.differenceCents])).toEqual([
+      ['2026-06-01', '2026-06-17', 'booking_date', 0],
+      ['2026-06-18', '2026-07-17', 'booking_date', 0],
+      ['2026-07-18', '2026-08-17', 'booking_date', 0],
+      ['2026-08-18', '2026-09-17', 'booking_date', 0],
+    ]);
+    // Auch bestätigte Abrechnungen folgen der Regel der Karte.
+    expect(list[1]?.card?.rule).toEqual({ date: 'booking_date', cutoff: 'exclusive' });
+  });
+
+  it('zeigt bei verbleibender Abweichung die Umsätze um die Grenze und die Gegenabweichung der Nachbarabrechnung', () => {
+    // Ein Kauf am Stichtag (18.07.), den die Bank schon am 17.07. bucht und noch in die Juli-Abrechnung nimmt.
+    importVisa([
+      ...purchases,
+      card('2026-07-18', '2026-07-17', 10),
+      credit('2026-06-18', 50),
+      credit('2026-07-18', 100),
+      credit('2026-08-18', 25),
+      credit('2026-09-18', 60),
+    ]);
+    const [, july, august] = settlements();
+    expect(july?.card).toMatchObject({ differenceCents: 1000, rule: { date: 'booking_date', cutoff: 'exclusive' } });
+    expect(august?.card?.differenceCents).toBe(-1000);
+    const end = july?.card?.boundaries.find((b) => b.side === 'end');
+    expect(end).toMatchObject({ neighborTransferId: august?.id, neighborDifferenceCents: -1000, counterDeviation: true });
+    expect(end?.purchases.map((x) => [x.date, x.amountCents, x.inPeriod, x.explains])).toEqual([
+      ['2026-07-17', -3000, true, false],
+      ['2026-07-18', -1000, false, true],
+    ]);
+    expect(end?.purchases[1]?.purpose).toContain('HAENDLER 10');
+    expect(august?.card?.boundaries.find((b) => b.side === 'start')).toMatchObject({ neighborTransferId: july?.id, counterDeviation: true });
   });
 });
 
