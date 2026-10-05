@@ -472,7 +472,7 @@ schwankende Schreibweise der Gegenpartei).
 | 4 | Umbuchungen und Kreditkarte | erledigt |
 | 5 | Deckungsprüfung und Ausgaben am Ausgabenkonto vorbei | erledigt |
 | 6 | Fixkosten/Abos manuell plus automatische Erkennung | erledigt |
-| 7 | Dashboard, Budget, Prognose, Sparziele | offen |
+| 7 | Dashboard, Budget, Prognose, Sparziele | erledigt |
 | 8 | Export/Re-Import, Startskript, Feinschliff | offen |
 
 Status nach Abschluss einer Phase hier aktualisieren.
@@ -649,6 +649,24 @@ Anlass: Im Mai wurden die Daueraufträge umgestellt (fünf beendet, Beträge ge�
 | Art | Vorschlag „Abo“ bei Kartenumsatz oder PayPal, sonst „Fixkosten“; beim Übernehmen wählbar. Monatswert: 14-tägig × 26/12, Quartal /3, Halbjahr /6, Jahr /12 |
 | § 13 | „Ausgaben am Ausgabenkonto vorbei“ nutzt weiter die schlichte Erkennung aus Phase 5 (`recurring-debits.ts`) |
 
+**Getroffen in Phase 7 (5. Oktober 2026)**
+
+| Frage | Entscheidung |
+|-------|--------------|
+| Startseite | Neuer erster Reiter „Übersicht“, ist auch die Startseite (unbekannte Adresse → Übersicht). Oben die offenen Punkte, darunter die Monatsübersicht |
+| Offene Punkte | Bei jeder Anzeige neu berechnet, nichts gespeichert (`GET /api/attention`). Das Backend liefert nur Daten, Texte und Beträge formatiert die Oberfläche. Punkte: Unterdeckung laut Deckungsprüfung je aktivem Konto mit Rolle `ausgaben` (wie auf der Seite Deckung: Trend ab 3 Monaten, ein Einzelfall nur, wenn die Empfehlung nicht „passt“ lautet; dazu Empfehlung „erhöhen“ und Konto im Minus), neue (nicht beendete) Abo-Vorschläge, Posten mit „Betrag weicht ab“, fehlende Abbuchung bzw. „beendet?“, Kündigungsfrist in den nächsten 60 Tagen, unkategorisierte Buchungen, vorgeschlagene Umbuchungen, Kartenabrechnungen mit Abweichung ≠ 0, Lücken zwischen Importen, Konto seit mehr als **35 Tagen** nicht importiert (letzter importierter Tag), nie importierte Konten, Konten mit `needsReimport`. Reihenfolge: rot, gelb, blau |
+| Kartenabrechnung mit Abweichung | Auf der Startseite nur, wenn der Kartenimport den Abrechnungszeitraum wenigstens teilweise abdeckt – ältere Abrechnungen vor dem ersten Kartenimport lassen sich nicht prüfen und bleiben nur auf der Seite Umbuchungen |
+| Einnahmen / Ausgaben | Einnahmen = Zuflüsse, Ausgaben = Abflüsse, jeweils ohne Umbuchungen (`transfer_id IS NULL`) – dieselben Summen wie die Buchungsliste, in die jede Zahl springt. Kartenumsätze nach Kaufdatum (`booking_date`). Sparkonto-Buchungen ohne Umbuchung (Zinsen, Entgelte) zählen normal. Ausgaben nach Kategorie = Abflüsse je Wurzelkategorie (Unterkategorien eingeschlossen) plus „ohne Kategorie“, Summe = Ausgaben; Gutschriften derselben Kategorie stehen nur als Hinweis daneben |
+| Vollständiger Monat | Jedes aktive Konto mit Importen deckt den Monat vollständig ab (Abdeckung § 6). Monate vor dem ersten Import eines Kontos zählen für dieses Konto nicht als Lücke, werden aber genannt; Konten ohne jeden Import bleiben außen vor (offener Punkt „noch nichts importiert“). Pro Konto gilt nur dessen Abdeckung |
+| Standardmonat | Jüngster vollständig importierter Monat bis heute, sonst jüngster Monat mit Buchungen, sonst der aktuelle |
+| Nettoeinkommen | Wiederkehrende Eingänge (`services/income.ts`): Gutschriften ohne Umbuchung je Gegenpartei (Posten-Schlüssel), Ketten wie bei der Abo-Erkennung (monatlich ab 3 Eingängen, Betrag zwischen Hälfte und Doppeltem). Budget: tatsächliche wiederkehrende Eingänge im Zeitraum, wenn jeder Monat vollständig ist und etwas einging; sonst Monatswert der laufenden Eingänge („erwartet“). Alle Gutschriften stehen zum Vergleich daneben |
+| Budget-Ist | Je Kategorie netto (Abflüsse minus Gutschriften derselben Kategorie), ohne Umbuchungen und ohne die wiederkehrenden Eingänge, Bucket wie in § 8 (vererbt). Sparen zusätzlich: Saldo der Umbuchungen (Paar/einseitig) auf Konten mit Rolle `sparen` (hin minus zurück, Datum = früheste beteiligte Buchung) – die Umbuchung bleibt weder Einnahme noch Ausgabe, sie zeigt nur, was zurückgelegt wurde. Kategorien ohne Bucket und Unkategorisiertes (nur Abflüsse) stehen offen unter „ohne Bucket“. Zeitraum: ein Monat oder Ø 3/6/12 Monate |
+| Abweichung je Kategorie | Ist gegen „üblich“ = Median der Netto-Ausgaben in bis zu 6 vollständigen Monaten vor dem Zeitraum (Monate ohne Buchung zählen als 0). Ziele je Kategorie gibt es nicht – die Abweichung zeigt, welche Kategorie einen Bucket über das Ziel treibt |
+| Prognose | Ab dem aktuellen Monat, 12 Monate (6/12/24 wählbar), jeder Monat ganz. Einnahmen: laufende wiederkehrende Eingänge mit letztem Betrag an ihren Terminen. Fixkosten: übernommene, aktive Posten außer „beendet?“, Soll an den Terminen aus nächstem Termin (laut Abgleich) und Intervall – Jahresposten im richtigen Monat. Variabel: Median der Netto-Beträge je Wurzelkategorie in den letzten bis zu 6 vollständigen Monaten, ohne Umbuchungen, ohne Buchungen, die einem Posten zugeordnet sind, und ohne wiederkehrende Eingänge. Gesamtsaldo je Monat, aufsummiert und – wenn jeder aktive Kontostand bekannt ist – als Kontostand gesamt |
+| Median | Gerade Anzahl: Mittel der beiden mittleren Werte, auf ganze Cent gerundet |
+| Sparziele | Tabelle `savings_goals` aus Migration 001, keine neue Migration. Priorität: kleinere Zahl = wichtiger (ab 1). Konto beim Anlegen standardmäßig das einzige aktive Sparkonto. Stand: Guthaben des Kontos (aktueller Kontostand § 12.5) wird den Zielen des Kontos nach Priorität zugeteilt, je Ziel höchstens der Zielbetrag; unbekannter Kontostand = 0 mit Hinweis. Plan: Ø-Überschuss der Prognose fließt ganz ins wichtigste offene Ziel, dann ins nächste; Überschuss eines Monats zählt an dessen Ende. Nötige Rate = Rest ÷ Monatsenden bis vor den Wunschmonat (mind. 1), aufgerundet |
+| Abo-Rückkopplung | Abos (Art „Abo“) aus der Prognose, Monatswert = ihre Abbuchungen in der Prognose ÷ Prognosemonate. Standardmäßig alle ausgewählt, abwählbar; das Backend rechnet den Plan mit dem um diese Beträge erhöhten Überschuss neu (`?without=`) und nennt je Ziel „N Monate früher“ |
+
 **Offene Punkte**
 
 - **Deckungsprüfung an echten Daten prüfen:** Erkennung der Daueraufträge
@@ -697,6 +715,13 @@ Anlass: Im Mai wurden die Daueraufträge umgestellt (fünf beendet, Beträge ge�
   erfassten Kontostand mit Datum; der Verlauf wird daraus über die
   Buchungen vor- und zurückgerechnet.
 
+- **Phase 7 an echten Daten prüfen:** Erkennung des Gehalts als
+  wiederkehrender Eingang (wechselnde Beträge, Sonderzahlungen,
+  Arbeitgeberwechsel), Schwelle „35 Tage nicht importiert“ und die
+  Vollständigkeit bei Konten mit unterschiedlichem Importbeginn sind nur
+  synthetisch getestet. Eingänge lassen sich bisher nicht von Hand aus
+  dem Nettoeinkommen ausschließen – erst ergänzen, wenn nötig.
+
 - **Abo-Erkennung an echten Daten prüfen:** PayPal-Verwendungszweck
   („Ihr Einkauf bei …“, „PP.….PP“), Kartenhändler hinter PayPal und die
   Supermarkt-Schwelle sind nur synthetisch getestet (Audible/Ring aus dem
@@ -704,10 +729,6 @@ Anlass: Im Mai wurden die Daueraufträge umgestellt (fünf beendet, Beträge ge�
 
 **Merkposten für spätere Phasen**
 
-- Phase 7 (Startseite): Anzahl unbestätigter Umbuchungen und nicht
-  passender Kartenabrechnungen als offene Punkte anzeigen; dazu aus
-  `GET /api/recurring` neue Vorschläge, fehlende/teurer gewordene Posten
-  und bald kündbare Verträge. Prognose nutzt nur übernommene, aktive Posten.
 - Phase 8 (Feinschliff): Der heutige Tag zählt in der Abdeckung als
   Lücke („03.10.2026 – 03.10.2026“) – heute und Zukunft nie als Lücke
   werten.

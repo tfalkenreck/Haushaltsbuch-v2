@@ -18,9 +18,16 @@ describe('parseHash', () => {
     expect(parseHash('#/buchungen?uncategorized=1').params.get('uncategorized')).toBe('1');
   });
 
-  it('fällt auf die Kontenseite zurück', () => {
-    expect(parseHash('').page).toBe('konten');
-    expect(parseHash('#/unbekannt').page).toBe('konten');
+  it('fällt auf die Übersicht (Startseite) zurück', () => {
+    expect(parseHash('').page).toBe('uebersicht');
+    expect(parseHash('#/unbekannt').page).toBe('uebersicht');
+  });
+
+  it('kennt die Auswertungsseiten', () => {
+    expect(parseHash('#/budget?month=2026-09&span=3').page).toBe('budget');
+    expect(parseHash('#/prognose').page).toBe('prognose');
+    expect(parseHash('#/sparziele').page).toBe('sparziele');
+    expect(parseHash('#/uebersicht?accountId=2').params.get('accountId')).toBe('2');
   });
 
   it('baut Links ohne leere Parameter', () => {

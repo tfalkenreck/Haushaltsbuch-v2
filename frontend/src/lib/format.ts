@@ -46,3 +46,15 @@ export function formatTimestamp(iso: string): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+/** Promille → „12,3 %“ (ganzzahlig, ohne Float-Division). */
+export function formatPermille(permille: number): string {
+  const negative = permille < 0;
+  const abs = Math.abs(permille);
+  return `${negative ? '−' : ''}${Math.trunc(abs / 10)},${abs % 10} %`;
+}
+
+/** Anzahl Monate → „1 Monat“ / „3 Monate“. */
+export function formatMonthCount(n: number): string {
+  return `${n} ${n === 1 ? 'Monat' : 'Monate'}`;
+}

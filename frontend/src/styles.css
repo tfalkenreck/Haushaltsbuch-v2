@@ -490,3 +490,124 @@ table.occurrences {
   margin: 0.25rem 0 0.5rem;
   font-size: 0.85rem;
 }
+
+/* --- Startseite, Budget, Prognose, Sparziele (Phase 7) --------------------- */
+ul.attention-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+}
+
+ul.attention-list > li {
+  margin-bottom: 0.5rem;
+  padding: 0.6rem 0.9rem;
+}
+
+ul.attention-list p {
+  margin: 0.25rem 0 0;
+}
+
+.attention-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.attention-head a {
+  white-space: nowrap;
+}
+
+.attention-bad {
+  border-left: 4px solid #cf222e;
+}
+
+.attention-warn {
+  border-left: 4px solid #d4a72c;
+}
+
+.attention-info {
+  border-left: 4px solid #0969da;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+  margin: 0.5rem 0;
+}
+
+.tile {
+  background: #fff;
+  border: 1px solid #d8dee4;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.tile-label {
+  color: #57606a;
+  font-size: 0.9rem;
+}
+
+.tile-value {
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar-neutral {
+  background: #54aeff;
+}
+
+td.bar-pair .bar + .bar {
+  margin-top: 2px;
+}
+
+table.data tr.selected td {
+  background: #ddf4ff;
+}
+
+.meter {
+  height: 0.75rem;
+  background: #eaeef2;
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 0.25rem 0 0.5rem;
+}
+
+.meter-fill {
+  display: block;
+  height: 100%;
+}
+
+.meter-ok {
+  background: #4ac26b;
+}
+
+.meter-over {
+  background: #ff8182;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  margin-bottom: 1rem;
+}
+
+table.forecast {
+  margin-bottom: 0;
+}
+
+table.forecast th,
+table.forecast td {
+  white-space: nowrap;
+}
+
+table.forecast tr.group th {
+  background: #f6f8fa;
+  font-weight: 600;
+}
+
+td.fixed-due {
+  background: #fff8c5;
+}

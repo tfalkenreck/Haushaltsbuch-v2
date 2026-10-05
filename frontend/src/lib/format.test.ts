@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addMonthsIso, centsToInput, formatCents, formatDate, formatMonth } from './format';
+import { addMonthsIso, centsToInput, formatCents, formatDate, formatMonth, formatMonthCount, formatPermille } from './format';
 
 describe('formatCents', () => {
   it.each([
@@ -34,5 +34,21 @@ describe('centsToInput / addMonthsIso', () => {
     expect(centsToInput(123456)).toBe('1234,56');
     expect(addMonthsIso('2026-01-31', 1)).toBe('2026-02-28');
     expect(addMonthsIso('2026-11-15', 3)).toBe('2027-02-15');
+  });
+});
+
+describe('formatPermille', () => {
+  it.each([
+    [0, '0,0 %'],
+    [123, '12,3 %'],
+    [1000, '100,0 %'],
+    [-55, '−5,5 %'],
+  ])('%i → %s', (value, text) => {
+    expect(formatPermille(value)).toBe(text);
+  });
+
+  it('Monatsanzahl mit Einzahl', () => {
+    expect(formatMonthCount(1)).toBe('1 Monat');
+    expect(formatMonthCount(4)).toBe('4 Monate');
   });
 });

@@ -1,18 +1,48 @@
 import { useEffect, useState } from 'react';
 
-export type Page = 'konten' | 'import' | 'buchungen' | 'umbuchungen' | 'deckung' | 'fixkosten' | 'kategorien' | 'regeln';
+export type Page =
+  | 'uebersicht'
+  | 'konten'
+  | 'import'
+  | 'buchungen'
+  | 'umbuchungen'
+  | 'deckung'
+  | 'fixkosten'
+  | 'budget'
+  | 'prognose'
+  | 'sparziele'
+  | 'kategorien'
+  | 'regeln';
 
 export interface Route {
   page: Page;
   params: URLSearchParams;
 }
 
-const PAGES: readonly Page[] = ['konten', 'import', 'buchungen', 'umbuchungen', 'deckung', 'fixkosten', 'kategorien', 'regeln'];
+const PAGES: readonly Page[] = [
+  'uebersicht',
+  'konten',
+  'import',
+  'buchungen',
+  'umbuchungen',
+  'deckung',
+  'fixkosten',
+  'budget',
+  'prognose',
+  'sparziele',
+  'kategorien',
+  'regeln',
+];
 
-/** `#/buchungen?accountId=3` → { page: 'buchungen', params }. Unbekannt → Konten. */
+/** Ist `name` eine Seite der Oberfläche? (Links aus den offenen Punkten.) */
+export function isPage(name: string): name is Page {
+  return (PAGES as readonly string[]).includes(name);
+}
+
+/** `#/buchungen?accountId=3` → { page: 'buchungen', params }. Unbekannt → Übersicht (Startseite). */
 export function parseHash(hash: string): Route {
   const [path = '', search = ''] = hash.replace(/^#\/?/, '').split('?');
-  const page = (PAGES as readonly string[]).includes(path) ? (path as Page) : 'konten';
+  const page = isPage(path) ? path : 'uebersicht';
   return { page, params: new URLSearchParams(search) };
 }
 
