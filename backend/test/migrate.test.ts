@@ -34,6 +34,8 @@ describe('Migrationsrunner', () => {
       '005_funding.sql',
       '006_funding_start.sql',
       '007_recurring.sql',
+      '008_contract_keys_card_rules.sql',
+      '009_app_state.sql',
     ]);
     const rows = db.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all();
     expect(rows).toEqual([
@@ -44,6 +46,8 @@ describe('Migrationsrunner', () => {
       { version: 5, name: '005_funding.sql' },
       { version: 6, name: '006_funding_start.sql' },
       { version: 7, name: '007_recurring.sql' },
+      { version: 8, name: '008_contract_keys_card_rules.sql' },
+      { version: 9, name: '009_app_state.sql' },
     ]);
   });
 

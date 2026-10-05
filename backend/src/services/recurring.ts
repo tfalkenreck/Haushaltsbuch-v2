@@ -1,23 +1,27 @@
 import type { Db } from '../db/connection.js';
-import { isValidIsoDate } from '../lib/date.js';
+import { daysBetween, isValidIsoDate } from '../lib/date.js';
 import { AppError } from '../lib/errors.js';
+import { formatIban, isValidIban, normalizeIban } from '../lib/iban.js';
 import { parseGermanAmount } from '../lib/money.js';
 import { normalizeCounterparty } from '../lib/normalize.js';
 import {
+  compactIban,
   containsWords,
   contractKey,
   effectiveCounterparty,
+  isContractLevel,
   providerKey,
   providerOf,
   recurringLabel,
+  viaIntermediary,
   type RecurringKeyInput,
 } from '../lib/recurring-key.js';
 import { nowIso } from '../lib/time.js';
 import { assertAssignableCategory } from './categories.js';
 import { coveredPeriods, mergePeriods, type Period } from './coverage.js';
-import { monthlyEquivalent, type Interval } from './recurring-debits.js';
+import { monthlyEquivalent, nextDue, type Interval } from './recurring-debits.js';
 import { checkItem, distanceToSchedule, type ItemCheck, type NoticeUnit } from './recurring-check.js';
-import { detectRecurring, type DetectDebit, type DetectedSeries } from './recurring-detection.js';
+import { DUE_TOLERANCE_DAYS, detectRecurring, guessInterval, type DetectDebit, type DetectedSeries } from './recurring-detection.js';
 
 /**
  * Fixkosten und Abos (CLAUDE.md § 14). Hauptweg ist das Anlegen von Hand;
@@ -36,6 +40,27 @@ import { detectRecurring, type DetectDebit, type DetectedSeries } from './recurr
  */
 
 export type RecurringKind = 'fixed_cost' | 'subscription';
+export type Bucket = 'need' | 'want' | 'save';
+
+/**
+ * Buchungen eines Vertrags innerhalb eines Postens. Hängen an einem Posten
+ * Buchungen mehrerer Verträge (verschmolzen, z. B. sechs Versicherungen
+ * beim selben Versicherer), bietet die Seite das Aufteilen an – nie
+ * automatisch.
+ */
+export interface ContractGroup {
+  /** Vertragsschlüssel (wird beim Aufteilen der Erkennungsschlüssel des neuen Postens). */
+  key: string;
+  /** Unterscheidungsmerkmal: Mandatsreferenz, IBAN oder Gegenpartei. */
+  label: string;
+  count: number;
+  firstDate: string;
+  lastDate: string;
+  /** Betrag der letzten Abbuchung, positiv. */
+  lastAmountCents: number;
+  /** Diese Gruppe bleibt beim Posten (passt am besten zu seinen Merkmalen und dem Soll). */
+  main: boolean;
+}
 
 export interface RecurringItem {
   id: number;
@@ -56,6 +81,9 @@ export interface RecurringItem {
   categoryPath: string | null;
   creditorId: string | null;
   mandateReference: string | null;
+  counterpartyIban: string | null;
+  /** 50/30/20-Bucket der Kategorie (vererbt); `save` = Sparrate. */
+  bucket: Bucket | null;
   origin: 'manual' | 'auto';
   isSuspected: boolean;
   active: boolean;
@@ -65,6 +93,11 @@ export interface RecurringItem {
   check: ItemCheck;
   /** Andere laufende Posten oder Vorschläge beim selben Anbieter mit ähnlichem Betrag (doppeltes Abo?). */
   duplicates: string[];
+  /**
+   * Automatisch zugeordnete Buchungen gehören zu mehreren Verträgen mit je
+   * mindestens zwei Buchungen → Aufteilen anbieten. Sonst `null`.
+   */
+  contracts: ContractGroup[] | null;
 }
 
 export interface RecurringSuggestion extends DetectedSeries {
@@ -86,7 +119,14 @@ export interface RecurringOverview {
   /** Laufende Vorschläge zuerst, beendete danach. */
   suggestions: RecurringSuggestion[];
   dismissed: DismissedSuggestion[];
-  totals: { count: number; monthlyCents: number; fixedCostMonthlyCents: number; subscriptionMonthlyCents: number };
+  totals: {
+    count: number;
+    monthlyCents: number;
+    fixedCostMonthlyCents: number;
+    subscriptionMonthlyCents: number;
+    /** Davon Sparraten: Posten, deren Kategorie den Bucket `save` hat (ETF-Sparplan, Bausparen). */
+    savingsMonthlyCents: number;
+  };
 }
 
 interface ItemRow {
@@ -107,6 +147,8 @@ interface ItemRow {
   category_path: string | null;
   creditor_id: string | null;
   mandate_reference: string | null;
+  counterparty_iban: string | null;
+  bucket: Bucket | null;
   origin: 'manual' | 'auto';
   status: 'suggested' | 'confirmed' | 'dismissed';
   is_suspected: number;
@@ -127,6 +169,7 @@ interface DebitRow {
   booking_text: string;
   creditor_id: string | null;
   mandate_reference: string | null;
+  counterparty_iban: string | null;
   category_id: number | null;
   recurring_item_id: number | null;
   recurring_source: 'manual' | null;
@@ -142,7 +185,8 @@ const CATEGORY_PATH = `CASE WHEN p.id IS NULL THEN c.name ELSE p.name || ' › '
 function loadItems(db: Db): ItemRow[] {
   return db
     .prepare(
-      `SELECT r.*, a.name AS account_name, ${CATEGORY_PATH} AS category_path
+      `SELECT r.*, a.name AS account_name, ${CATEGORY_PATH} AS category_path,
+              CASE WHEN c.parent_id IS NOT NULL AND c.inherit_bucket = 1 THEN p.bucket ELSE c.bucket END AS bucket
          FROM recurring_items r
          LEFT JOIN accounts a ON a.id = r.account_id
          LEFT JOIN categories c ON c.id = r.category_id
@@ -157,7 +201,7 @@ function loadDebits(db: Db): Debit[] {
   const rows = db
     .prepare(
       `SELECT t.id, t.account_id, a.role AS account_role, t.booking_date, t.amount_cents, t.counterparty,
-              t.counterparty_normalized, t.purpose, t.booking_text, t.creditor_id, t.mandate_reference, t.category_id,
+              t.counterparty_normalized, t.purpose, t.booking_text, t.creditor_id, t.mandate_reference, t.counterparty_iban, t.category_id,
               t.recurring_item_id, t.recurring_source
          FROM transactions t JOIN accounts a ON a.id = t.account_id
         WHERE t.amount_cents < 0 AND t.transfer_id IS NULL
@@ -176,6 +220,7 @@ const keyInput = (r: DebitRow): RecurringKeyInput => ({
   purpose: r.purpose,
   creditorId: r.creditor_id,
   mandateReference: r.mandate_reference,
+  counterpartyIban: r.counterparty_iban,
 });
 
 /** Letzter importierter Tag und abgedeckte Zeiträume je Konto. */
@@ -200,32 +245,59 @@ const baseDetectionKey = (key: string) => key.replace(/@d\d+$/, '').replace(/\|p
 /** Betrag passt grob (Hälfte bis Doppeltes) – nötig, wo nur die Gegenpartei verbindet. */
 const amountFits = (soll: number, ist: number) => ist * 2 >= soll && ist <= soll * 2;
 
+const sameText = (a: string | null, b: string | null) => a !== null && b !== null && a.trim().toUpperCase() === b.trim().toUpperCase();
+
+/**
+ * Widerspricht ein Merkmal des Postens dem der Buchung? Eine andere
+ * Mandatsreferenz, Gläubiger-ID oder Gegen-IBAN heißt: anderer Vertrag,
+ * auch wenn der Name passt (der Kontoinhaber als Empfänger verschiedener
+ * Überweisungen, mehrere Verträge beim selben Versicherer).
+ */
+function conflicts(item: ItemRow, d: Debit): boolean {
+  const differ = (a: string | null, b: string | null) => a !== null && b !== null && !sameText(a, b);
+  return (
+    differ(item.mandate_reference, d.row.mandate_reference) ||
+    differ(item.creditor_id, d.row.creditor_id) ||
+    differ(compactIban(item.counterparty_iban), compactIban(d.row.counterparty_iban))
+  );
+}
+
 /**
  * Wie gut passt eine Buchung zu einem Posten? Kleiner = besser, `null` = gar
  * nicht. Reihenfolge: Erkennungsschlüssel des Vertrags, Gläubiger-ID mit
- * Mandatsreferenz, Erkennungsschlüssel des Anbieters, Gläubiger-ID allein,
- * Gegenpartei (ganze Wörter) mit grob passendem Betrag.
+ * Mandatsreferenz, Erkennungsschlüssel des Anbieters (nur wenn der Posten
+ * an keinem Mandat hängt), Gläubiger-ID bzw. Gegen-IBAN allein, Gegenpartei
+ * (ganze Wörter) mit grob passendem Betrag und ohne widersprechendes Merkmal.
  */
 function matchRank(item: ItemRow, d: Debit): number | null {
   if (item.account_id !== null && item.account_id !== d.row.account_id) return null;
   const amount = -d.row.amount_cents;
   const soll = -item.amount_cents;
+  const intermediary = d.keys.counterparty.startsWith('paypal ');
   if (item.detection_key) {
     const base = baseDetectionKey(item.detection_key);
     if (base === d.keys.contract && (!base.startsWith('cp:') || amountFits(soll, amount))) return 1;
   }
-  if (item.creditor_id && d.row.creditor_id && item.creditor_id.toUpperCase() === d.row.creditor_id.toUpperCase()) {
-    if (item.mandate_reference) {
-      if (item.mandate_reference === d.row.mandate_reference) return 2;
-    } else if (!item.detection_key) {
-      return 4;
-    }
+  if (!intermediary && item.creditor_id && item.mandate_reference) {
+    if (sameText(item.creditor_id, d.row.creditor_id) && sameText(item.mandate_reference, d.row.mandate_reference)) return 2;
   }
-  if (item.detection_key) {
+  // Ein Posten, der an einem Vertrag (Mandat) hängt, nimmt keine Buchungen
+  // anderer Verträge desselben Anbieters auf.
+  if (item.detection_key && !isContractLevel(baseDetectionKey(item.detection_key))) {
     const provider = providerOf(item.detection_key);
     if (provider === d.keys.provider && (!provider.startsWith('cp:') || amountFits(soll, amount))) return 3;
   }
-  if (item.counterparty_normalized && containsWords(d.keys.counterparty, item.counterparty_normalized) && amountFits(soll, amount)) {
+  if (!item.detection_key && !intermediary && !conflicts(item, d)) {
+    if (item.creditor_id && sameText(item.creditor_id, d.row.creditor_id)) return 4;
+    const iban = compactIban(item.counterparty_iban);
+    if (iban && iban === compactIban(d.row.counterparty_iban)) return 4;
+  }
+  if (
+    item.counterparty_normalized &&
+    containsWords(d.keys.counterparty, item.counterparty_normalized) &&
+    amountFits(soll, amount) &&
+    (intermediary || !conflicts(item, d))
+  ) {
     return 5;
   }
   return null;
@@ -294,7 +366,70 @@ function similar(a: { provider: string; interval: Interval; amount: number }, b:
 function itemProvider(item: ItemRow): string {
   if (item.detection_key) return providerOf(item.detection_key);
   if (item.creditor_id) return `cid:${item.creditor_id.toUpperCase()}`;
+  const iban = compactIban(item.counterparty_iban);
+  if (iban) return `iban:${iban}`;
   return `cp:${item.counterparty_normalized}`;
+}
+
+/** Unterscheidungsmerkmal eines Vertrags für die Anzeige. */
+function contractLabel(d: Debit): string {
+  const r = d.row;
+  if (r.mandate_reference?.trim() && !viaIntermediary(keyInput(r))) return `Mandat ${r.mandate_reference.trim()}`;
+  const iban = compactIban(r.counterparty_iban);
+  if (iban && !viaIntermediary(keyInput(r))) return `IBAN ${formatIban(iban)}`;
+  return recurringLabel(keyInput(r));
+}
+
+/**
+ * Verträge unter den automatisch zugeordneten Buchungen eines Postens.
+ * Verschmolzen ist ein Posten erst, wenn mindestens zwei Verträge je
+ * mindestens zwei Buchungen haben – einzelne Buchungen mit wechselnder
+ * Mandatsreferenz (girocard-Lastschrift) sind kein eigener Vertrag.
+ */
+function contractGroups(item: ItemRow, debits: Debit[]): ContractGroup[] | null {
+  const groups = new Map<string, Debit[]>();
+  for (const d of debits) {
+    if (d.row.recurring_source === 'manual') continue;
+    const list = groups.get(d.keys.contract);
+    if (list) list.push(d);
+    else groups.set(d.keys.contract, [d]);
+  }
+  const repeated = [...groups.entries()].filter(([, list]) => list.length >= 2);
+  if (repeated.length < 2) return null;
+
+  const soll = -item.amount_cents;
+  const ownKey = item.detection_key ? baseDetectionKey(item.detection_key) : null;
+  const lastOf = (list: Debit[]) => list[list.length - 1] as Debit;
+  const fits = (list: Debit[]) => {
+    const r = lastOf(list).row;
+    return (
+      (item.mandate_reference !== null && sameText(item.mandate_reference, r.mandate_reference)) ||
+      (item.mandate_reference === null &&
+        compactIban(item.counterparty_iban) !== null &&
+        compactIban(item.counterparty_iban) === compactIban(r.counterparty_iban))
+    );
+  };
+  // Beim Posten bleibt: sein Erkennungsschlüssel, sonst die Gruppe mit seinen
+  // Merkmalen, sonst die mit dem Betrag am nächsten am Soll, dann die größte.
+  const ranked = [...repeated].sort(
+    ([ka, a], [kb, b]) =>
+      Number(kb === ownKey) - Number(ka === ownKey) ||
+      Number(fits(b)) - Number(fits(a)) ||
+      Math.abs(-lastOf(a).row.amount_cents - soll) - Math.abs(-lastOf(b).row.amount_cents - soll) ||
+      b.length - a.length,
+  );
+  const mainKey = ranked[0]?.[0];
+  return repeated
+    .map(([key, list]) => ({
+      key,
+      label: contractLabel(lastOf(list)),
+      count: list.length,
+      firstDate: (list[0] as Debit).row.booking_date,
+      lastDate: lastOf(list).row.booking_date,
+      lastAmountCents: -lastOf(list).row.amount_cents,
+      main: key === mainKey,
+    }))
+    .sort((a, b) => Number(b.main) - Number(a.main) || b.count - a.count || a.key.localeCompare(b.key));
 }
 
 export function listRecurring(db: Db, today: string): RecurringOverview {
@@ -350,6 +485,8 @@ export function listRecurring(db: Db, today: string): RecurringOverview {
         categoryPath: r.category_path,
         creditorId: r.creditor_id,
         mandateReference: r.mandate_reference,
+        counterpartyIban: r.counterparty_iban,
+        bucket: r.bucket,
         origin: r.origin,
         isSuspected: r.is_suspected === 1,
         active: r.active === 1,
@@ -358,6 +495,7 @@ export function listRecurring(db: Db, today: string): RecurringOverview {
         bookingCount: own.length,
         check,
         duplicates: [],
+        contracts: contractGroups(r, own),
       };
     });
 
@@ -420,6 +558,7 @@ export function listRecurring(db: Db, today: string): RecurringOverview {
       monthlyCents: sum(counted),
       fixedCostMonthlyCents: sum(counted.filter((i) => i.kind === 'fixed_cost')),
       subscriptionMonthlyCents: sum(counted.filter((i) => i.kind === 'subscription')),
+      savingsMonthlyCents: sum(counted.filter((i) => i.bucket === 'save')),
     },
   };
 }
@@ -443,6 +582,8 @@ export interface RecurringItemInput {
   categoryId?: number | null | undefined;
   creditorId?: string | null | undefined;
   mandateReference?: string | null | undefined;
+  /** IBAN des Empfängers – trennt Überweisungen an verschiedene Empfänger gleichen Namens. */
+  counterpartyIban?: string | null | undefined;
   active?: boolean | undefined;
   notes?: string | null | undefined;
 }
@@ -461,6 +602,7 @@ interface Validated {
   categoryId: number | null;
   creditorId: string | null;
   mandateReference: string | null;
+  counterpartyIban: string | null;
   active: boolean;
   notes: string | null;
 }
@@ -485,6 +627,8 @@ function validate(db: Db, input: RecurringItemInput): Validated {
   }
   const categoryId = input.categoryId ?? null;
   if (categoryId !== null) assertAssignableCategory(db, categoryId);
+  const counterpartyIban = input.counterpartyIban?.trim() ? normalizeIban(input.counterpartyIban) : null;
+  if (counterpartyIban !== null && !isValidIban(counterpartyIban)) throw new AppError(`„${input.counterpartyIban}“ ist keine gültige IBAN.`);
   return {
     name,
     kind: input.kind,
@@ -499,6 +643,7 @@ function validate(db: Db, input: RecurringItemInput): Validated {
     categoryId,
     creditorId: input.creditorId?.trim() || null,
     mandateReference: input.mandateReference?.trim() || null,
+    counterpartyIban,
     active: input.active ?? true,
     notes: input.notes?.trim() || null,
   };
@@ -519,8 +664,8 @@ export function createRecurringItem(db: Db, input: RecurringItemInput): { id: nu
       `INSERT INTO recurring_items
          (name, kind, account_id, counterparty, counterparty_normalized, amount_cents, interval, next_due_date,
           contract_end_date, notice_period_value, notice_period_unit, category_id, creditor_id, mandate_reference,
-          origin, status, is_suspected, active, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 'confirmed', 0, ?, ?, ?, ?)`,
+          counterparty_iban, origin, status, is_suspected, active, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 'confirmed', 0, ?, ?, ?, ?)`,
     )
     .run(
       v.name,
@@ -537,6 +682,7 @@ export function createRecurringItem(db: Db, input: RecurringItemInput): { id: nu
       v.categoryId,
       v.creditorId,
       v.mandateReference,
+      v.counterpartyIban,
       v.active ? 1 : 0,
       v.notes,
       now,
@@ -557,7 +703,8 @@ export function updateRecurringItem(db: Db, id: number, input: RecurringItemInpu
     `UPDATE recurring_items
         SET name = ?, kind = ?, account_id = ?, counterparty = ?, counterparty_normalized = ?, amount_cents = ?,
             interval = ?, next_due_date = ?, contract_end_date = ?, notice_period_value = ?, notice_period_unit = ?,
-            category_id = ?, creditor_id = ?, mandate_reference = ?, is_suspected = 0, active = ?, notes = ?, updated_at = ?
+            category_id = ?, creditor_id = ?, mandate_reference = ?, counterparty_iban = ?, is_suspected = 0, active = ?, notes = ?,
+            updated_at = ?
       WHERE id = ?`,
   ).run(
     v.name,
@@ -574,6 +721,7 @@ export function updateRecurringItem(db: Db, id: number, input: RecurringItemInpu
     v.categoryId,
     v.creditorId,
     v.mandateReference,
+    v.counterpartyIban,
     v.active ? 1 : 0,
     v.notes,
     nowIso(),
@@ -604,16 +752,24 @@ function findSuggestion(db: Db, key: string, today: string): RecurringSuggestion
   return suggestion;
 }
 
-/** Bestandteile eines Vorschlags für einen neuen Posten. */
-function suggestionFields(db: Db, s: RecurringSuggestion) {
+interface ContractFields {
+  counterpartyNormalized: string;
+  creditorId: string | null;
+  mandateReference: string | null;
+  counterpartyIban: string | null;
+}
+
+/** Merkmale eines Vertrags aus seiner letzten Buchung (bei Zahlungsdiensten nur der Händler). */
+function contractFields(db: Db, txId: number): ContractFields {
   const last = db
-    .prepare('SELECT counterparty, counterparty_normalized, purpose, creditor_id, mandate_reference FROM transactions WHERE id = ?')
-    .get(s.transactionIds[s.transactionIds.length - 1]) as {
+    .prepare('SELECT counterparty, counterparty_normalized, purpose, creditor_id, mandate_reference, counterparty_iban FROM transactions WHERE id = ?')
+    .get(txId) as {
     counterparty: string;
     counterparty_normalized: string;
     purpose: string;
     creditor_id: string | null;
     mandate_reference: string | null;
+    counterparty_iban: string | null;
   };
   const input: RecurringKeyInput = {
     counterparty: last.counterparty,
@@ -621,14 +777,20 @@ function suggestionFields(db: Db, s: RecurringSuggestion) {
     purpose: last.purpose,
     creditorId: last.creditor_id,
     mandateReference: last.mandate_reference,
+    counterpartyIban: last.counterparty_iban,
   };
-  const viaIntermediary = effectiveCounterparty(input).startsWith('paypal ');
+  const intermediary = viaIntermediary(input);
   return {
-    counterparty: s.label,
     counterpartyNormalized: effectiveCounterparty(input),
-    creditorId: viaIntermediary ? null : last.creditor_id,
-    mandateReference: viaIntermediary ? null : last.mandate_reference,
+    creditorId: intermediary ? null : last.creditor_id,
+    mandateReference: intermediary ? null : last.mandate_reference,
+    counterpartyIban: intermediary ? null : compactIban(last.counterparty_iban),
   };
+}
+
+/** Bestandteile eines Vorschlags für einen neuen Posten. */
+function suggestionFields(db: Db, s: RecurringSuggestion) {
+  return { counterparty: s.label, ...contractFields(db, s.transactionIds[s.transactionIds.length - 1] as number) };
 }
 
 export interface ConfirmInput {
@@ -646,8 +808,9 @@ export function confirmSuggestion(db: Db, input: ConfirmInput, today: string): {
     .prepare(
       `INSERT INTO recurring_items
          (name, kind, account_id, counterparty, counterparty_normalized, amount_cents, interval, next_due_date,
-          category_id, creditor_id, mandate_reference, detection_key, origin, status, is_suspected, active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'auto', 'confirmed', ?, ?, ?, ?)`,
+          category_id, creditor_id, mandate_reference, counterparty_iban, detection_key, origin, status, is_suspected, active,
+          created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'auto', 'confirmed', ?, ?, ?, ?)`,
     )
     .run(
       input.name?.trim() || s.label,
@@ -661,6 +824,7 @@ export function confirmSuggestion(db: Db, input: ConfirmInput, today: string): {
       s.categoryId,
       f.creditorId,
       f.mandateReference,
+      f.counterpartyIban,
       s.key,
       s.suspected ? 1 : 0,
       s.ended ? 0 : 1,
@@ -684,6 +848,101 @@ export function dismissSuggestion(db: Db, key: string, today: string): { id: num
     )
     .run(s.label, s.kind, s.accountId, f.counterparty, f.counterpartyNormalized, -s.lastAmountCents, s.interval, s.nextDueDate, s.key, s.suspected ? 1 : 0, now, now);
   return { id: Number(result.lastInsertRowid) };
+}
+
+// ---------------------------------------------------------------------------
+// Verschmolzene Posten aufteilen
+// ---------------------------------------------------------------------------
+
+/** Name eines abgeteilten Postens: Name des Postens plus Merkmal des Vertrags. */
+function splitName(name: string, label: string): string {
+  const full = `${name} · ${label}`;
+  return full.length > 200 ? full.slice(0, 200) : full;
+}
+
+/**
+ * Teilt die genannten Verträge (`keys` aus `contracts`) von einem
+ * verschmolzenen Posten ab: jeder wird ein eigener übernommener Posten mit
+ * dem Vertragsschlüssel als Erkennungsschlüssel, Art und Kategorie des
+ * Postens, letztem Betrag und erkanntem Intervall. Bleibt danach nur ein
+ * Vertrag beim Posten, bekommt er dessen Merkmale (Schlüssel, Mandat,
+ * Gläubiger-ID, IBAN) – ein künftiger weiterer Vertrag beim selben Anbieter
+ * landet dann nicht wieder hier. Von Hand zugeordnete Buchungen bleiben,
+ * wo sie sind. Nur auf Knopfdruck, nie automatisch.
+ */
+export function splitRecurringItem(db: Db, id: number, keys: string[], today: string): { created: number[] } {
+  const row = getRow(db, id);
+  if (row.status !== 'confirmed') throw new AppError('Nur übernommene Posten lassen sich aufteilen.');
+  const rows = loadItems(db);
+  const item = rows.find((r) => r.id === id) as ItemRow;
+  const own = assign(rows, loadDebits(db)).get(id) ?? [];
+  const groups = contractGroups(item, own);
+  if (!groups) throw new AppError(`„${item.name}“ enthält nur einen Vertrag – nichts aufzuteilen.`);
+  const wanted = new Set(keys);
+  const chosen = groups.filter((g) => wanted.has(g.key));
+  if (chosen.length === 0 || chosen.length !== wanted.size) throw new AppError('Diese Verträge gehören nicht (mehr) zum Posten – die Liste neu laden.', 404);
+  if (chosen.some((g) => g.main)) throw new AppError('Der Hauptvertrag bleibt beim Posten; nur die übrigen lassen sich abteilen.');
+
+  const debitsOf = (key: string) => own.filter((d) => d.row.recurring_source !== 'manual' && d.keys.contract === key);
+  const coverage = loadCoverage(db);
+  const now = nowIso();
+  const insert = db.prepare(
+    `INSERT INTO recurring_items
+       (name, kind, account_id, counterparty, counterparty_normalized, amount_cents, interval, next_due_date, category_id,
+        creditor_id, mandate_reference, counterparty_iban, detection_key, origin, status, is_suspected, active, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 'confirmed', 0, ?, ?, ?)`,
+  );
+  return db.transaction(() => {
+    const created: number[] = [];
+    for (const group of chosen) {
+      const list = debitsOf(group.key);
+      const last = list[list.length - 1] as Debit;
+      const existing = db.prepare('SELECT id, status FROM recurring_items WHERE detection_key = ?').get(group.key) as
+        | { id: number; status: string }
+        | undefined;
+      if (existing?.status === 'confirmed') throw new AppError(`Für „${group.label}“ gibt es schon einen eigenen Posten.`);
+      // Ein früher verworfener Vorschlag für diesen Vertrag weicht der bewussten Entscheidung.
+      if (existing) db.prepare('DELETE FROM recurring_items WHERE id = ?').run(existing.id);
+
+      const interval = guessInterval(list.map((d) => ({ date: d.row.booking_date, amountCents: d.row.amount_cents }))) ?? item.interval;
+      const end = coverage.get(last.row.account_id)?.end ?? today;
+      const fields = contractFields(db, last.row.id);
+      const result = insert.run(
+        splitName(item.name, group.label),
+        item.kind,
+        item.account_id ?? last.row.account_id,
+        recurringLabel(keyInput(last.row)),
+        fields.counterpartyNormalized,
+        last.row.amount_cents,
+        interval,
+        nextDue(last.row.booking_date, interval),
+        item.category_id,
+        fields.creditorId,
+        fields.mandateReference,
+        fields.counterpartyIban,
+        group.key,
+        // Läuft er nicht mehr (nächster Termin samt Toleranz vor dem Ende der Importe), gleich als beendet.
+        daysBetween(nextDue(last.row.booking_date, interval), end) > DUE_TOLERANCE_DAYS[interval] ? 0 : 1,
+        now,
+        now,
+      );
+      created.push(Number(result.lastInsertRowid));
+    }
+
+    const remaining = groups.filter((g) => !wanted.has(g.key));
+    const main = remaining[0];
+    if (remaining.length === 1 && main) {
+      const list = debitsOf(main.key);
+      const fields = contractFields(db, (list[list.length - 1] as Debit).row.id);
+      const taken = db.prepare('SELECT 1 FROM recurring_items WHERE detection_key = ? AND id <> ?').get(main.key, id);
+      db.prepare(
+        `UPDATE recurring_items
+            SET detection_key = ?, creditor_id = ?, mandate_reference = ?, counterparty_iban = ?, updated_at = ?
+          WHERE id = ?`,
+      ).run(taken ? item.detection_key : main.key, fields.creditorId, fields.mandateReference, fields.counterpartyIban, now, id);
+    }
+    return { created };
+  })();
 }
 
 // ---------------------------------------------------------------------------

@@ -1,17 +1,23 @@
 import { normalizeCounterparty } from './normalize.js';
 
 /**
- * Schlüssel für Fixkosten und Abos (CLAUDE.md § 14): wer steckt hinter
- * einer Abbuchung, und zu welchem Vertrag gehört sie?
+ * Schlüssel für Fixkosten und Abos (CLAUDE.md § 14, § 19): wer steckt
+ * hinter einer Abbuchung, und zu welchem Vertrag gehört sie?
+ *
+ * Reihenfolge: Mandatsreferenz vor Gläubiger-ID vor Gegen-IBAN vor
+ * normalisierter Gegenpartei.
  *
  * - Zahlungsdienste (PayPal) sind nicht der Anbieter: Bei Lastschriften
  *   steht der Händler im Verwendungszweck („Ihr Einkauf bei Audible Ltd“),
  *   bei Kartenumsätzen im Händlernamen („PAYPAL *AUDIBLE“). Beides ergibt
- *   `paypal audible` – Gläubiger-ID und Mandatsreferenz von PayPal sind für
- *   alle Einkäufe gleich und taugen hier nicht als Schlüssel.
- * - Sonst hat die Gläubiger-ID Vorrang vor der Gegenpartei: sie bleibt
- *   gleich, auch wenn die Schreibweise der Gegenpartei schwankt.
- * - Die Mandatsreferenz trennt Verträge beim selben Anbieter.
+ *   `paypal audible` – Gläubiger-ID, Mandatsreferenz und IBAN von PayPal
+ *   sind für alle Einkäufe gleich und taugen hier nicht als Schlüssel.
+ * - Anbieter: Gläubiger-ID (bleibt gleich, auch wenn die Schreibweise der
+ *   Gegenpartei schwankt), sonst Gegen-IBAN (Überweisungen und
+ *   Daueraufträge an verschiedene Empfänger gleichen Namens – etwa den
+ *   Kontoinhaber selbst – bleiben getrennt), sonst Gegenpartei.
+ * - Vertrag: Anbieter plus Mandatsreferenz – sechs Verträge beim selben
+ *   Versicherer bleiben sechs Verträge.
  */
 
 export interface RecurringKeyInput {
@@ -20,6 +26,7 @@ export interface RecurringKeyInput {
   purpose: string;
   creditorId: string | null;
   mandateReference: string | null;
+  counterpartyIban: string | null;
 }
 
 const INTERMEDIARY = /^paypal\b/;
@@ -52,16 +59,33 @@ export function effectiveCounterparty(t: RecurringKeyInput): string {
   return normalizeCounterparty(t.purpose).split(' ').filter(Boolean).slice(0, 4).join(' ');
 }
 
-/** Anbieter: PayPal-Händler, sonst Gläubiger-ID, sonst Gegenpartei. */
+/** IBAN ohne Leerzeichen, groß; `null`, wenn keine angegeben ist. */
+export function compactIban(iban: string | null): string | null {
+  const compact = iban?.replace(/\s+/g, '').toUpperCase() ?? '';
+  return compact === '' ? null : compact;
+}
+
+/** Anbieter: PayPal-Händler, sonst Gläubiger-ID, sonst Gegen-IBAN, sonst Gegenpartei. */
 export function providerKey(t: RecurringKeyInput): string {
-  if (!isIntermediary(t) && t.creditorId) return `cid:${t.creditorId.trim().toUpperCase()}`;
+  if (isIntermediary(t)) return `cp:${effectiveCounterparty(t)}`;
+  if (t.creditorId?.trim()) return `cid:${t.creditorId.trim().toUpperCase()}`;
+  const iban = compactIban(t.counterpartyIban);
+  if (iban) return `iban:${iban}`;
   return `cp:${effectiveCounterparty(t)}`;
 }
 
 /** Vertrag: Anbieter plus Mandatsreferenz (nicht bei Zahlungsdiensten). */
 export function contractKey(t: RecurringKeyInput): string {
   const provider = providerKey(t);
-  return t.mandateReference && !isIntermediary(t) ? `${provider}|m:${t.mandateReference.trim()}` : provider;
+  return t.mandateReference?.trim() && !isIntermediary(t) ? `${provider}|m:${t.mandateReference.trim()}` : provider;
+}
+
+/** Hängt der Schlüssel an einem Vertrag (Mandatsreferenz) statt nur am Anbieter? */
+export const isContractLevel = (key: string) => key.includes('|m:');
+
+/** Zahlungsdienst wie PayPal – dessen Gläubiger-ID, Mandat und IBAN gehören nicht zum Händler. */
+export function viaIntermediary(t: RecurringKeyInput): boolean {
+  return isIntermediary(t);
 }
 
 /** Anbieter-Schlüssel aus einem Erkennungsschlüssel (ohne Mandat und Zusatz für doppelte Abos). */

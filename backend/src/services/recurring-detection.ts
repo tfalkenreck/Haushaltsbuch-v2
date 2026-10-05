@@ -289,3 +289,16 @@ export function detectRecurring(debits: DetectDebit[], dataEnd: ReadonlyMap<numb
 
   return result.sort((a, b) => Number(a.ended) - Number(b.ended) || b.monthlyCents - a.monthlyCents || a.label.localeCompare(b.label));
 }
+
+/**
+ * Intervall einer Reihe von Abbuchungen nach dem mittleren Abstand (für
+ * einen abgeteilten Vertrag, CLAUDE.md § 19); `null`, wenn keins passt.
+ */
+export function guessInterval(debits: { date: string }[]): Interval | null {
+  const dates = debits.map((d) => d.date).sort();
+  const gaps: number[] = [];
+  for (let i = 1; i < dates.length; i++) gaps.push(daysBetween(dates[i - 1] as string, dates[i] as string));
+  if (gaps.length === 0) return null;
+  const mid = median(gaps);
+  return INTERVAL_ORDER.find((interval) => mid >= INTERVAL_DAYS[interval].min && mid <= INTERVAL_DAYS[interval].max) ?? null;
+}

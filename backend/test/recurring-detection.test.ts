@@ -31,12 +31,19 @@ function series(start: string, count: number, euros: number | number[], key: str
 const END = new Map([[1, '2026-09-30']]);
 
 describe('Schlüssel für Fixkosten und Abos', () => {
-  const tx = (counterparty: string, purpose: string, creditorId: string | null = null, mandateReference: string | null = null) => ({
+  const tx = (
+    counterparty: string,
+    purpose: string,
+    creditorId: string | null = null,
+    mandateReference: string | null = null,
+    counterpartyIban: string | null = null,
+  ) => ({
     counterparty,
     counterpartyNormalized: normalizeCounterparty(counterparty),
     purpose,
     creditorId,
     mandateReference,
+    counterpartyIban,
   });
 
   it('führt PayPal per Lastschrift und per Karte auf denselben Händler zusammen', () => {
@@ -62,6 +69,23 @@ describe('Schlüssel für Fixkosten und Abos', () => {
     expect(contractKey(a)).toBe('cid:DE11ZZZ00000000001|m:M-HAUS-1');
     expect(contractKey(b)).toBe('cid:DE11ZZZ00000000001|m:M-KFZ-2');
     expect(providerKey(tx('Stadtwerke Beispiel GmbH', 'Abschlag'))).toBe('cp:stadtwerke beispiel');
+  });
+
+  it('trennt Überweisungen an Empfänger gleichen Namens über die Gegen-IBAN', () => {
+    // Der Kontoinhaber selbst als Empfänger: Gemeinschaftskonto und Strom-Dauerauftrag.
+    const gemeinschaft = tx('Max Mustermann', 'Haushaltsgeld', null, null, 'DE02 1203 0000 0000 2020 51');
+    const strom = tx('Max Mustermann', 'Strom', null, null, 'DE02100100100006820101');
+    expect(contractKey(gemeinschaft)).toBe('iban:DE02120300000000202051');
+    expect(contractKey(strom)).toBe('iban:DE02100100100006820101');
+    // Mandat vor Gläubiger-ID vor IBAN: die IBAN des Versicherers trennt keine Verträge, das Mandat schon.
+    expect(contractKey(tx('Allianz', 'Leben', 'DE11ZZZ00000000001', 'A-1', 'DE02120300000000202051'))).toBe(
+      'cid:DE11ZZZ00000000001|m:A-1',
+    );
+    expect(contractKey(tx('Ohne Gläubiger', 'X', null, 'A-1', 'DE02120300000000202051'))).toBe('iban:DE02120300000000202051|m:A-1');
+    // PayPal: IBAN und Mandat gehören PayPal, nicht dem Händler.
+    expect(contractKey(tx('PayPal Europe S.a.r.l. et Cie S.C.A', 'Ihr Einkauf bei Ring', 'LU96ZZZ0000000000000000058', 'P', 'LU89751000135104200E'))).toBe(
+      'cp:paypal ring',
+    );
   });
 
   it('vergleicht Gegenparteien wortweise', () => {

@@ -5,6 +5,7 @@ import type { Db } from '../src/db/connection.js';
 import { addDays, monthRange } from '../src/lib/date.js';
 import { createAccount } from '../src/services/accounts.js';
 import { importFile } from '../src/services/imports.js';
+import { listCategories } from '../src/services/categories.js';
 import {
   confirmSuggestion,
   createRecurringItem,
@@ -13,6 +14,7 @@ import {
   listRecurring,
   resetTransactionRecurring,
   setTransactionRecurring,
+  splitRecurringItem,
   updateRecurringItem,
   type RecurringItem,
   type RecurringItemInput,
@@ -249,7 +251,13 @@ describe('Erkennung von Fixkosten und Abos', () => {
     });
     // Telefon mit Verbrauch: der Betrag weicht vom Soll ab, aber keine Abbuchung fehlt.
     expect(item.check).toMatchObject({ missingCount: 0, nextDueDate: '2026-10-07' });
-    expect(after.totals).toEqual({ count: 1, monthlyCents: 3888, fixedCostMonthlyCents: 3888, subscriptionMonthlyCents: 0 });
+    expect(after.totals).toEqual({
+      count: 1,
+      monthlyCents: 3888,
+      fixedCostMonthlyCents: 3888,
+      subscriptionMonthlyCents: 0,
+      savingsMonthlyCents: 0,
+    });
 
     const fitness = after.suggestions.find((s) => s.label === 'Fitnessstudio Beispiel')!;
     dismissSuggestion(db, fitness.key, TODAY);
@@ -333,6 +341,105 @@ describe('Fixkosten und Abos von Hand', () => {
     expect(() => createRecurringItem(db, manual({ counterparty: 'X', nextDueDate: '2026-02-30' }))).toThrow(/nächster Termin/);
     expect(() => createRecurringItem(db, manual({ counterparty: 'X', noticePeriodValue: 3 }))).toThrow(/braucht ein Vertragsende/);
     expect(() => createRecurringItem(db, manual({ counterparty: '' }))).toThrow(/Name oder Gegenpartei/);
+  });
+});
+
+describe('Verträge beim selben Anbieter', () => {
+  beforeEach(setup);
+
+  it('übernimmt einen Vertrag, ohne die übrigen Verträge des Anbieters aufzusaugen', () => {
+    const hausrat = listRecurring(db, TODAY).suggestions.find((s) => s.label === 'Muster Versicherung AG')!;
+    const { id } = confirmSuggestion(db, { key: hausrat.key, name: 'Hausrat' }, TODAY);
+    const after = listRecurring(db, TODAY);
+    expect(after.items.find((i) => i.id === id)).toMatchObject({ bookingCount: 9, amountCents: 1250, contracts: null, check: { status: 'ok' } });
+    // Der Kfz-Vertrag (gleiche Gläubiger-ID, anderes Mandat) bleibt ein eigener Vorschlag.
+    expect(after.suggestions.find((s) => s.label === 'MUSTER VERSICHERUNG')).toMatchObject({ count: 9, lastAmountCents: 2788 });
+  });
+
+  it('erkennt einen verschmolzenen Posten und teilt ihn nur auf Knopfdruck auf', () => {
+    // Von Hand angelegt mit der Gläubiger-ID allein: trifft beide Verträge.
+    const { id } = createRecurringItem(
+      db,
+      manual({ name: 'Versicherung', kind: 'fixed_cost', counterparty: 'Muster Versicherung', creditorId: 'DE11ZZZ00000000001', amount: '12,50', nextDueDate: '2026-10-15' }),
+    );
+    const merged = listRecurring(db, TODAY).items.find((i) => i.id === id)!;
+    expect(merged.bookingCount).toBe(18);
+    expect(merged.contracts).toEqual([
+      { key: 'cid:DE11ZZZ00000000001|m:M-HAUS-1', label: 'Mandat M-HAUS-1', count: 9, firstDate: '2026-01-15', lastDate: '2026-09-15', lastAmountCents: 1250, main: true },
+      { key: 'cid:DE11ZZZ00000000001|m:M-KFZ-2', label: 'Mandat M-KFZ-2', count: 9, firstDate: '2026-01-15', lastDate: '2026-09-15', lastAmountCents: 2788, main: false },
+    ]);
+
+    // Nichts passiert von selbst; der Hauptvertrag lässt sich nicht abteilen.
+    expect(() => splitRecurringItem(db, id, ['cid:DE11ZZZ00000000001|m:M-HAUS-1'], TODAY)).toThrow(/Hauptvertrag/);
+    expect(() => splitRecurringItem(db, id, ['gibt es nicht'], TODAY)).toThrow(/gehören nicht/);
+
+    const { created } = splitRecurringItem(db, id, ['cid:DE11ZZZ00000000001|m:M-KFZ-2'], TODAY);
+    const after = listRecurring(db, TODAY);
+    expect(after.items.find((i) => i.id === id)).toMatchObject({
+      bookingCount: 9,
+      contracts: null,
+      mandateReference: 'M-HAUS-1',
+      detectionKey: 'cid:DE11ZZZ00000000001|m:M-HAUS-1',
+    });
+    expect(after.items.find((i) => i.id === created[0])).toMatchObject({
+      name: 'Versicherung · Mandat M-KFZ-2',
+      kind: 'fixed_cost',
+      amountCents: 2788,
+      interval: 'monthly',
+      nextDueDate: '2026-10-15',
+      bookingCount: 9,
+      active: true,
+      check: { status: 'ok' },
+    });
+    // Der abgeteilte Vertrag wird nicht noch einmal vorgeschlagen.
+    expect(after.suggestions.some((s) => s.label === 'MUSTER VERSICHERUNG' || s.label === 'Muster Versicherung AG')).toBe(false);
+  });
+
+  it('trennt Überweisungen an den Kontoinhaber über die IBAN', () => {
+    const own = createTestDb();
+    const account = createAccount(own, { name: 'Giro', role: 'einnahmen', bankAdapter: 'volksbank-owl', iban: IBAN.volksbankGiro }).id;
+    const rows: VbRow[] = [];
+    for (const m of MONTHS) {
+      // Gemeinschaftskonto (nicht angelegt) und Strom-Dauerauftrag: beide an „Max Mustermann“.
+      rows.push({ date: `${m}-01`, amountCents: -60000, counterparty: 'Max Mustermann', counterpartyIban: 'DE02120300000000202051', bookingText: 'Dauerauftrag', purpose: 'Haushalt' });
+      rows.push({ date: `${m}-05`, amountCents: -9500, counterparty: 'Max Mustermann', counterpartyIban: 'DE02100100100006820101', bookingText: 'Dauerauftrag', purpose: 'Strom' });
+    }
+    importFile(own, { accountId: account, fileName: 'giro.csv', bytes: volksbankCsv(IBAN.volksbankGiro, rows, 100000), periodStart: '2026-01-01', periodEnd: '2026-09-30' });
+    const { suggestions } = listRecurring(own, TODAY);
+    expect(suggestions.map((s) => [s.key, s.lastAmountCents, s.count])).toEqual([
+      ['iban:DE02120300000000202051', 60000, 9],
+      ['iban:DE02100100100006820101', 9500, 9],
+    ]);
+    const strom = suggestions[1]!;
+    const { id } = confirmSuggestion(own, { key: strom.key, name: 'Strom' }, TODAY);
+    // Von Hand mit Namen angelegt: die IBAN des übernommenen Postens hält die andere Überweisung fern.
+    expect(listRecurring(own, TODAY).items.find((i) => i.id === id)).toMatchObject({ bookingCount: 9, counterpartyIban: 'DE02100100100006820101' });
+    createRecurringItem(own, manual({ name: 'Haushalt', counterparty: 'Max Mustermann', counterpartyIban: 'DE02 1203 0000 0000 2020 51', amount: '600,00' }));
+    expect(listRecurring(own, TODAY).items.find((i) => i.name === 'Haushalt')).toMatchObject({ bookingCount: 9, contracts: null });
+    expect(() => createRecurringItem(own, manual({ counterparty: 'X', counterpartyIban: 'DE00123' }))).toThrow(/keine gültige IBAN/);
+  });
+
+  it('nennt bei „Betrag weicht ab“ die abweichende Buchung, nicht die letzte', () => {
+    createRecurringItem(db, manual({ name: 'Streaming', counterparty: 'Beispiel Streaming', amount: '12,99', nextDueDate: '2026-10-07', accountId: giro }));
+    const id = itemNamed('Streaming').id;
+    updateRecurringItem(db, id, manual({ name: 'Streaming', counterparty: 'Beispiel Streaming', amount: '9,99', nextDueDate: '2026-10-07', accountId: giro }));
+    const check = itemNamed('Streaming').check;
+    expect(check.status).toBe('differs');
+    expect(check.differing).toMatchObject({ dueDate: '2026-09-07', date: '2026-09-07', amountCents: 1299 });
+  });
+
+  it('weist Sparraten in der Summe getrennt aus', () => {
+    const sparen = listCategories(db).find((c) => c.name === 'Sparen')!;
+    createRecurringItem(db, manual({ name: 'ETF-Sparplan', kind: 'fixed_cost', counterparty: 'Depotbank', amount: '100,00', categoryId: sparen.id }));
+    createRecurringItem(db, manual({ name: 'Ring', counterparty: 'Ring', amount: '8,00' }));
+    expect(listRecurring(db, TODAY).totals).toEqual({
+      count: 2,
+      monthlyCents: 10800,
+      fixedCostMonthlyCents: 10000,
+      subscriptionMonthlyCents: 800,
+      savingsMonthlyCents: 10000,
+    });
+    expect(itemNamed('ETF-Sparplan').bucket).toBe('save');
   });
 });
 

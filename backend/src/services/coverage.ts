@@ -51,6 +51,18 @@ export function gapsBetween(merged: Period[]): Period[] {
   return gaps;
 }
 
+/**
+ * Lücken bis gestern: heute und die Zukunft sind nie eine Lücke – sie
+ * können noch gar nicht importiert sein. Eine Lücke, die erst heute oder
+ * später beginnt, entfällt; eine, die hineinreicht, endet gestern.
+ */
+export function pastGaps(merged: Period[], today: string): Period[] {
+  const yesterday = addDays(today, -1);
+  return gapsBetween(merged)
+    .filter((g) => g.start <= yesterday)
+    .map((g) => (g.end > yesterday ? { start: g.start, end: yesterday } : g));
+}
+
 /** Wie viele Tage von `period` durch `merged` abgedeckt sind. */
 function coveredDays(merged: Period[], period: Period): number {
   let days = 0;
@@ -89,8 +101,9 @@ export function getCoverage(db: Db, accountId: number, today: string): AccountCo
   const last = periods[periods.length - 1];
   if (!first || !last) return { accountId, periods, gaps: [], months: [] };
 
-  const gaps = gapsBetween(periods);
-  if (last.end < today) gaps.push({ start: addDays(last.end, 1), end: today });
+  const gaps = pastGaps(periods, today);
+  const yesterday = addDays(today, -1);
+  if (last.end < yesterday) gaps.push({ start: addDays(last.end, 1), end: yesterday });
 
   const counts = new Map(
     (

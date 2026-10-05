@@ -45,6 +45,18 @@ describe('Soll/Ist-Abgleich', () => {
     expect(check.occurrences[0]).toMatchObject({ state: 'differs', amountCents: 1299 });
   });
 
+  it('nennt die abweichende Buchung, nicht die letzte (Nachzahlung ohne Termin)', () => {
+    const bookings = [
+      ...monthly('2026-01-07', [999, 999, 999, 999, 999, 999, 999, 999, 1499]),
+      { transactionId: id++, date: '2026-09-12', amountCents: 999 },
+    ];
+    const check = checkItem(item(), bookings, ctx);
+    expect(check.status).toBe('differs');
+    expect(check.lastBooking).toMatchObject({ date: '2026-09-12', amountCents: 999 });
+    expect(check.differing).toMatchObject({ dueDate: '2026-09-07', date: '2026-09-07', amountCents: 1499, state: 'differs' });
+    expect(checkItem(item(), monthly('2026-01-07', [999, 999]), ctx).differing).toBeNull();
+  });
+
   it('meldet eine fehlende Abbuchung, zwei in Folge als beendet', () => {
     const bookings = monthly('2026-01-07', [999, 999, 999, 999, 999, 999, 999, 999, 999]);
     // August fehlt, September da: fehlt mittendrin.

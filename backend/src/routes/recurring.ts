@@ -9,6 +9,7 @@ import {
   listRecurring,
   resetTransactionRecurring,
   setTransactionRecurring,
+  splitRecurringItem,
   updateRecurringItem,
   type ConfirmInput,
   type RecurringItemInput,
@@ -43,6 +44,7 @@ const itemBody = {
     categoryId: { type: ['integer', 'null'], minimum: 1 },
     creditorId: { type: ['string', 'null'], maxLength: 50 },
     mandateReference: { type: ['string', 'null'], maxLength: 50 },
+    counterpartyIban: { type: ['string', 'null'], maxLength: 50 },
     active: { type: 'boolean' },
     notes: { type: ['string', 'null'], maxLength: 500 },
   },
@@ -78,6 +80,26 @@ export function recurringRoutes(app: FastifyInstance, db: Db): void {
     deleteRecurringItem(db, request.params.id);
     return listRecurring(db, todayIso());
   });
+
+  /** Verschmolzenen Posten aufteilen: die genannten Verträge werden eigene Posten (nur auf Knopfdruck). */
+  app.post<{ Params: { id: number }; Body: { keys: string[] } }>(
+    '/api/recurring/:id/split',
+    {
+      schema: {
+        params: idParams,
+        body: {
+          type: 'object',
+          required: ['keys'],
+          additionalProperties: false,
+          properties: { keys: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string', minLength: 1, maxLength: 500 } } },
+        },
+      },
+    },
+    async (request) => {
+      const { created } = splitRecurringItem(db, request.params.id, request.body.keys, todayIso());
+      return { created, overview: listRecurring(db, todayIso()) };
+    },
+  );
 
   /** Vorschlag übernehmen – erst dann zählt er als Fixkosten/Abo. */
   app.post<{ Body: ConfirmInput }>('/api/recurring/suggestions/confirm', { schema: { body: keyBody } }, async (request, reply) => {

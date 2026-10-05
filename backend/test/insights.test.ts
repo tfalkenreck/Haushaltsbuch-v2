@@ -221,7 +221,9 @@ describe('Offene Punkte', () => {
     createRecurringItem(db, { kind: 'fixed_cost', accountId: null, counterparty: 'Stadtwerke Beispiel', amount: '80,00', interval: 'monthly', nextDueDate: '2026-10-20' });
     db.prepare("DELETE FROM transactions WHERE counterparty = 'Stadtwerke Beispiel' AND booking_date >= '2026-09-01'").run();
     const items = getAttention(db, TODAY);
-    expect(items.find((i) => i.kind === 'recurring_price')).toMatchObject({ entries: [{ name: 'Netflix', sollCents: 999, lastCents: 1299 }] });
+    expect(items.find((i) => i.kind === 'recurring_price')).toMatchObject({
+      entries: [{ name: 'Netflix', sollCents: 999, date: '2026-09-05', actualCents: 1299 }],
+    });
     expect(items.find((i) => i.kind === 'recurring_missing')).toMatchObject({
       entries: [{ name: 'Stadtwerke Beispiel', dueDate: '2026-09-20', ended: false }],
     });

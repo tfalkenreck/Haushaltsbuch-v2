@@ -83,6 +83,12 @@ export interface ItemCheck {
   /** Zugeordnete Buchungen, die zu keinem Termin passen (Nachzahlung, Sonderbuchung). */
   extraBookings: CheckBooking[];
   lastBooking: CheckBooking | null;
+  /**
+   * Bei Status `differs`: der Termin, dessen Buchung vom Soll abweicht (die
+   * jüngste einem Termin zugeordnete Buchung) – nicht unbedingt die letzte
+   * Buchung, die kann eine Nachzahlung ohne Termin sein.
+   */
+  differing: Occurrence | null;
   /** Letzte Betragsänderung in den Buchungen (alter Betrag mindestens zweimal). */
   priceChange: PriceChange | null;
   /** Die letzten beiden Abbuchungen sind gleich, aber nicht das Soll → Soll anpassen? */
@@ -246,6 +252,7 @@ export function checkItem(item: CheckItem, bookings: CheckBooking[], ctx: CheckC
     missingCount: occurrences.filter((o) => o.state === 'missing').length,
     extraBookings,
     lastBooking: last,
+    differing: status === 'differs' ? (latestBooked ?? null) : null,
     priceChange: lastPriceChange(sorted.map((b) => ({ date: b.date, amountCents: -b.amountCents }))),
     suggestedAmountCents,
     nextDueDate,

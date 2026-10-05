@@ -1,6 +1,7 @@
 import type { Db } from '../db/connection.js';
 import { daysBetween } from '../lib/date.js';
-import { getCoverage, gapsBetween, type Period } from './coverage.js';
+import { getCoverage, pastGaps, type Period } from './coverage.js';
+import { lastExportAt } from './data-export.js';
 import type { TrendStatus } from './funding-analysis.js';
 import { getFunding } from './funding.js';
 import type { Interval } from './recurring-debits.js';
@@ -17,6 +18,9 @@ import { listTransfers } from './transfers.js';
 
 /** Ein Konto gilt als länger nicht importiert, wenn sein letzter importierter Tag so viele Tage zurückliegt. */
 export const STALE_IMPORT_DAYS = 35;
+
+/** Hinweis auf einen Export, wenn der letzte so viele Tage zurückliegt (CLAUDE.md § 16). */
+export const EXPORT_REMINDER_DAYS = 30;
 
 export type AttentionSeverity = 'bad' | 'warn' | 'info';
 
@@ -47,8 +51,17 @@ export interface RecurringSuggestionsItem extends Base {
 
 export interface RecurringPriceItem extends Base {
   kind: 'recurring_price';
-  /** lastCents > sollCents = teurer geworden. */
-  entries: { itemId: number; name: string; sollCents: number; lastCents: number | null }[];
+  /**
+   * Die abweichende Buchung (jüngste einem Termin zugeordnete), nicht
+   * unbedingt die letzte. actualCents > sollCents = teurer geworden.
+   */
+  entries: { itemId: number; name: string; sollCents: number; date: string | null; actualCents: number | null }[];
+}
+
+export interface RecurringMergedItem extends Base {
+  kind: 'recurring_merged';
+  /** Posten mit Buchungen mehrerer Verträge – Aufteilen anbieten. */
+  entries: { itemId: number; name: string; contracts: number }[];
 }
 
 export interface RecurringMissingItem extends Base {
@@ -104,6 +117,14 @@ export interface ImportStaleItem extends Base {
   days: number;
 }
 
+export interface ExportDueItem extends Base {
+  kind: 'export_due';
+  /** Letzter Export; null = noch nie exportiert. */
+  lastExportAt: string | null;
+  /** Tage seit dem letzten Export; null = noch nie. */
+  days: number | null;
+}
+
 export interface AccountOnlyItem extends Base {
   kind: 'never_imported' | 'needs_reimport';
   accountId: number;
@@ -114,6 +135,7 @@ export type AttentionItem =
   | FundingDeficitItem
   | RecurringSuggestionsItem
   | RecurringPriceItem
+  | RecurringMergedItem
   | RecurringMissingItem
   | RecurringCancelItem
   | UncategorizedItem
@@ -121,6 +143,7 @@ export type AttentionItem =
   | CardMismatchItem
   | ImportGapItem
   | ImportStaleItem
+  | ExportDueItem
   | AccountOnlyItem;
 
 const SEVERITY_ORDER: Record<AttentionSeverity, number> = { bad: 0, warn: 1, info: 2 };
@@ -186,8 +209,18 @@ function recurringItems(db: Db, today: string): AttentionItem[] {
         itemId: i.id,
         name: i.name,
         sollCents: i.amountCents,
-        lastCents: i.check.lastBooking?.amountCents ?? null,
+        date: i.check.differing?.date ?? null,
+        actualCents: i.check.differing?.amountCents ?? null,
       })),
+    });
+  }
+
+  const merged = overview.items.filter((i) => i.contracts !== null);
+  if (merged.length > 0) {
+    items.push({
+      kind: 'recurring_merged',
+      severity: 'warn',
+      entries: merged.map((i) => ({ itemId: i.id, name: i.name, contracts: i.contracts?.length ?? 0 })),
     });
   }
 
@@ -269,7 +302,7 @@ function importItems(db: Db, today: string, coverage: Map<number, Period[]>): At
       continue;
     }
     // Lücken zwischen Importen; der Abstand seit dem letzten Import bis heute ist der Punkt „länger nicht importiert“.
-    const gaps = gapsBetween(periods);
+    const gaps = pastGaps(periods, today);
     if (gaps.length > 0) items.push({ kind: 'import_gap', severity: 'warn', ...base, gaps });
     const lastPeriod = (periods[periods.length - 1] as Period).end;
     const lastDate = a.last_booking !== null && a.last_booking > lastPeriod ? a.last_booking : lastPeriod;
@@ -278,6 +311,15 @@ function importItems(db: Db, today: string, coverage: Map<number, Period[]>): At
     if (a.needs_reimport === 1) items.push({ kind: 'needs_reimport', severity: 'info', ...base });
   }
   return items;
+}
+
+/** Betrieb (§ 16): länger als 30 Tage (oder nie) exportiert – sobald es Buchungen gibt, die verloren gehen könnten. */
+function exportItems(db: Db, today: string): AttentionItem[] {
+  if (!db.prepare('SELECT 1 FROM transactions LIMIT 1').get()) return [];
+  const last = lastExportAt(db);
+  const days = last === null ? null : daysBetween(last.slice(0, 10), today);
+  if (days !== null && days <= EXPORT_REMINDER_DAYS) return [];
+  return [{ kind: 'export_due', severity: 'info', lastExportAt: last, days }];
 }
 
 export function getAttention(db: Db, today: string): AttentionItem[] {
@@ -298,7 +340,7 @@ export function getAttention(db: Db, today: string): AttentionItem[] {
     });
   }
 
-  items.push(...transferItems(db, coverage), ...importItems(db, today, coverage));
+  items.push(...transferItems(db, coverage), ...importItems(db, today, coverage), ...exportItems(db, today));
   // Stabil sortiert: schwerwiegend zuerst, sonst in der Reihenfolge oben.
   return items
     .map((item, i) => ({ item, i }))

@@ -405,7 +405,8 @@ describe('Abdeckung', () => {
     const coverage = getCoverage(db, id, '2026-10-03');
 
     expect(coverage.periods).toEqual([{ start: '2026-07-01', end: '2026-09-30' }]);
-    expect(coverage.gaps).toEqual([{ start: '2026-10-01', end: '2026-10-03' }]);
+    // Heute (03.10.) ist keine Lücke – der Tag kann noch gar nicht im Export stehen.
+    expect(coverage.gaps).toEqual([{ start: '2026-10-01', end: '2026-10-02' }]);
     expect(coverage.months).toEqual([
       { month: '2026-07', status: 'complete', transactionCount: 0 },
       { month: '2026-08', status: 'complete', transactionCount: 1 },
@@ -432,8 +433,21 @@ describe('Abdeckung', () => {
     ]);
     expect(coverage.gaps).toEqual([
       { start: '2026-08-01', end: '2026-08-31' },
-      { start: '2026-09-21', end: '2026-10-03' },
+      { start: '2026-09-21', end: '2026-10-02' },
     ]);
+  });
+
+  it('wertet heute und die Zukunft nie als Lücke', () => {
+    const id = account('volksbank-owl', IBAN.volksbankGiro);
+    db.prepare(
+      `INSERT INTO import_batches (account_id, bank_adapter, file_name, file_sha256, imported_at, period_start, period_end)
+       VALUES (?, 'volksbank-owl', 'a.csv', 'x', '2026-10-03T00:00:00Z', '2026-09-01', '2026-10-02'),
+              (?, 'volksbank-owl', 'b.csv', 'y', '2026-10-03T00:00:00Z', '2026-10-05', '2026-10-31')`,
+    ).run(id, id);
+    // Bis gestern importiert; die Lücke 03.–04.10. beginnt heute und zählt nicht.
+    expect(getCoverage(db, id, '2026-10-03').gaps).toEqual([]);
+    // Zwei Tage später reicht sie bis gestern.
+    expect(getCoverage(db, id, '2026-10-05').gaps).toEqual([{ start: '2026-10-03', end: '2026-10-04' }]);
   });
 
   it('warnt beim Import, wenn eine Lücke offen bleibt', () => {
